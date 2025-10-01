@@ -81,7 +81,7 @@ function SessionPage() {
 
   // initialize the variables
   const [maximizedUserId, setMaximizedUserId] = useState<string | null>(null)
-  const { userId, username, roomState, sessionDurationMinutes, clearSession } = useSession()
+  const { userId, username, roomState, sessionDurationMinutes, rewindFetchGroupSize, clearSession } = useSession()
   const [isMicOn, setIsMicOn] = useState(false)
   const [isCamOn, setisCamOn] = useState(false)
   const [isScreenSharing, setIsScreenSharing] = useState(false)
@@ -301,6 +301,7 @@ function SessionPage() {
       }
 
       console.log('SessionPage: About to fetch video with joiningRequestId:', videoRequestId)
+      console.log('SessionPage: Using rewind fetch group size:', rewindFetchGroupSize)
       console.log(
         'SessionPage: All moqClient requestIds before video fetch:',
         moqClient ? Array.from(moqClient.requests.keys()) : 'no client',
@@ -311,9 +312,8 @@ function SessionPage() {
         typeAndProps: {
           type: FetchType.Relative,
           props: {
-            fullTrackName: videoTrackName,
             joiningRequestId: videoRequestId,
-            joiningStart: 5n, // last 5 groups
+            joiningStart: BigInt(rewindFetchGroupSize),
           },
         },
       })

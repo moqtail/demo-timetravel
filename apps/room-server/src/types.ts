@@ -43,6 +43,7 @@ export interface JoinResponse {
   userId: string
   roomState: RoomStateView
   sessionDurationMinutes: number
+  rewindFetchGroupSize: number
 }
 
 export interface RoomUser {
