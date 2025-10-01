@@ -22,7 +22,14 @@ type SessionContextType = {
   username: string
   roomState: RoomState | undefined
   sessionDurationMinutes: number
-  setSession: (userId: string, username: string, roomState: RoomState, sessionDurationMinutes: number) => void
+  rewindFetchGroupSize: number
+  setSession: (
+    userId: string,
+    username: string,
+    roomState: RoomState,
+    sessionDurationMinutes: number,
+    rewindFetchGroupSize: number,
+  ) => void
   clearSession: () => void
 }
 
@@ -33,12 +40,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [username, setUsername] = useState('')
   const [roomState, setRoomState] = useState<RoomState | undefined>(undefined)
   const [sessionDurationMinutes, setSessionDurationMinutes] = useState(10) // default fallback
+  const [rewindFetchGroupSize, setRewindFetchGroupSize] = useState(5) // default fallback
 
-  function setSession(userId: string, username: string, roomState: RoomState, sessionDurationMinutes: number) {
+  function setSession(
+    userId: string,
+    username: string,
+    roomState: RoomState,
+    sessionDurationMinutes: number,
+    rewindFetchGroupSize: number,
+  ) {
     setUserId(userId)
     setUsername(username)
     setRoomState(roomState)
     setSessionDurationMinutes(sessionDurationMinutes)
+    setRewindFetchGroupSize(rewindFetchGroupSize)
   }
 
   function clearSession() {
@@ -46,10 +61,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setUsername('')
     setRoomState(undefined)
     setSessionDurationMinutes(10)
+    setRewindFetchGroupSize(5)
   }
 
   return (
-    <SessionContext.Provider value={{ userId, username, roomState, sessionDurationMinutes, setSession, clearSession }}>
+    <SessionContext.Provider
+      value={{ userId, username, roomState, sessionDurationMinutes, rewindFetchGroupSize, setSession, clearSession }}
+    >
       {children}
     </SessionContext.Provider>
   )

@@ -175,6 +175,7 @@ let roomLimits = {
   maxRooms: parseInt(process.env.MOQTAIL_MAX_ROOMS || '5'),
   maxUsersPerRoom: parseInt(process.env.MOQTAIL_MAX_USERS_PER_ROOM || '6'),
   sessionDurationMinutes: parseInt(process.env.MOQTAIL_SESSION_DURATION_MINUTES || '10'),
+  rewindFetchGroupSize: parseInt(process.env.MOQTAIL_REWIND_FETCH_GROUP_SIZE || '5'),
 }
 
 // ANSI to HTML converter for log formatting
@@ -344,11 +345,22 @@ function handleSetRoomLimits(req: any, res: any) {
         return
       }
 
+      if (
+        typeof newLimits.rewindFetchGroupSize !== 'number' ||
+        newLimits.rewindFetchGroupSize < 1 ||
+        newLimits.rewindFetchGroupSize > 100
+      ) {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'rewindFetchGroupSize must be a number between 1 and 100' }))
+        return
+      }
+
       // Update the limits
       roomLimits = {
         maxRooms: newLimits.maxRooms,
         maxUsersPerRoom: newLimits.maxUsersPerRoom,
         sessionDurationMinutes: newLimits.sessionDurationMinutes,
+        rewindFetchGroupSize: newLimits.rewindFetchGroupSize,
       }
 
       console.log('Room limits updated by admin:', roomLimits)
@@ -868,6 +880,7 @@ io.on('connection', (socket) => {
       userId,
       roomState,
       sessionDurationMinutes: roomLimits.sessionDurationMinutes,
+      rewindFetchGroupSize: roomLimits.rewindFetchGroupSize,
     }
     console.debug('sending joined-room', joinResponse, socket.id)
     socket.emit('joined-room', joinResponse)

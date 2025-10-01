@@ -680,6 +680,12 @@
                 <span class="form-help">Current limit: 1-1440 minutes (24 hours)</span>
               </div>
 
+              <div class="form-group">
+                <label for="rewind-fetch-group-size">Rewind fetch group size:</label>
+                <input type="number" id="rewind-fetch-group-size" min="1" max="100" required />
+                <span class="form-help">Number of groups to fetch for rewind playback (1-100)</span>
+              </div>
+
               <div class="form-actions">
                 <button type="submit" class="save-btn">Save Settings</button>
                 <button type="button" class="reset-btn" onclick="loadSettings()">Reset</button>
@@ -830,6 +836,7 @@
             document.getElementById('max-rooms').value = limits.maxRooms
             document.getElementById('max-users').value = limits.maxUsersPerRoom
             document.getElementById('session-duration').value = limits.sessionDurationMinutes
+            document.getElementById('rewind-fetch-group-size').value = limits.rewindFetchGroupSize
           } else {
             console.error('Failed to load settings:', result.error)
             alert('Failed to load settings. Please try refreshing the page.')
@@ -852,6 +859,7 @@
             maxRooms: parseInt(document.getElementById('max-rooms').value),
             maxUsersPerRoom: parseInt(document.getElementById('max-users').value),
             sessionDurationMinutes: parseInt(document.getElementById('session-duration').value),
+            rewindFetchGroupSize: parseInt(document.getElementById('rewind-fetch-group-size').value),
           }
 
           const response = await fetch('/api/rooms/limits', {
