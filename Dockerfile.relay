@@ -1,0 +1,12 @@
+FROM rustlang/rust:nightly AS relay-builder
+
+WORKDIR /usr/src/app
+
+RUN apt-get update && apt-get install -y git \
+ && git clone https://github.com/streaming-university/moqtail.git
+
+WORKDIR /usr/src/app/moqtail
+
+EXPOSE 4433
+
+CMD ["cargo", "run", "--bin", "relay", "--", "--port", "4433", "--cert-file", "cert/cert.pem", "--key-file", "cert/key.pem"]
