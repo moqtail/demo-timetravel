@@ -1,5 +1,5 @@
 window.appSettings = {
-  relayUrl: 'https://localhost:4433',
+  relayUrl: 'https://timetravel.moqtail.dev:4445',
   wsUrl: 'http://localhost:3001',
   wsPath: '/ws',
   posthog_host: 'https://eu.i.posthog.com',
@@ -30,6 +30,20 @@ window.appSettings = {
     numberOfChannels: 1,
     bitrate: 48_000,
   },
+  screenshareEncoderConfig: {
+    codec: 'avc1.64001F',
+    width: 1280,
+    height: 720,
+    bitrate: 1_000_000,
+    framerate: 30,
+    latencyMode: 'realtime',
+    hardwareAcceleration: 'prefer-software',
+  },
+  screenshareDecoderConfig: {
+    codec: 'avc1.64001F',
+    optimizeForLatency: true,
+    hardwareAcceleration: 'prefer-software',
+  },
   keyFrameInterval: 50,
   clockNormalizationConfig: {
     timeServerUrl: 'https://time.akamai.com/?ms',
@@ -39,5 +53,4 @@ window.appSettings = {
     targetLatencyMs: 100,
     maxLatencyMs: 1000,
   },
-  frameTimeoutMs: 1000,
 }

@@ -22,6 +22,9 @@ let audioDecoder: AudioDecoder | null = null
 let waitingForKeyframe = true
 let theDecoderConfig: VideoDecoderConfig | null = null
 let frameTimeoutId: ReturnType<typeof setTimeout> | null = null
+let isScreenshareContent = false
+let targetResolution = { width: 640, height: 360 } // Default for camera video
+let currentFrameTimeoutMs = 2000 // Default timeout
 
 // Diagnostic counters
 let videoFrameCount = 0
@@ -30,14 +33,46 @@ let lastLogTime = performance.now()
 let moqObjectCount = 0
 
 self.onmessage = async (e) => {
-  const { type, canvas, payload, extensions, decoderConfig, serverTimestamp, frameTimeoutMs } = e.data
+  let { type, canvas, payload, extensions, decoderConfig, serverTimestamp, contentType, newWidth, newHeight } = e.data
 
   if (type === 'init') {
     ctx = canvas?.getContext?.('2d') ?? null
     theDecoderConfig = decoderConfig || null
 
-    // Create ClockNormalizer instance for this worker
+    isScreenshareContent = contentType === 'screenshare'
+    if (isScreenshareContent) {
+      currentFrameTimeoutMs = 30000
+      targetResolution = { width: 1280, height: 720 }
+      if (ctx) {
+        ctx.imageSmoothingEnabled = false
+      }
+    } else {
+      currentFrameTimeoutMs = 1000
+      targetResolution = { width: 640, height: 360 }
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true
+      }
+    }
 
+    return
+  }
+
+  if (type === 'resize') {
+    if (ctx && newWidth && newHeight) {
+      console.log(`[DECODER] Resizing canvas to ${newWidth}x${newHeight}`)
+      targetResolution = { width: newWidth, height: newHeight }
+      ctx.canvas.width = newWidth
+      ctx.canvas.height = newHeight
+
+      if (isScreenshareContent) {
+        ctx.imageSmoothingEnabled = false
+      } else {
+        ctx.imageSmoothingEnabled = true
+      }
+
+      ctx.fillStyle = '#1a1a1a'
+      ctx.fillRect(0, 0, newWidth, newHeight)
+    }
     return
   }
 
@@ -93,7 +128,7 @@ self.onmessage = async (e) => {
     }
     frameTimeoutId = setTimeout(() => {
       clearCanvas()
-    }, frameTimeoutMs)
+    }, currentFrameTimeoutMs) // Use our persistent timeout value
 
     if ((configHeader || isKey) && !videoDecoder && theDecoderConfig) {
       // console.log('[DECODER] Creating new video decoder at', new Date().toISOString())
@@ -225,8 +260,8 @@ self.onmessage = async (e) => {
         frame.close()
         return
       }
-      const targetWidth = 640
-      const targetHeight = 360
+      const targetWidth = targetResolution.width
+      const targetHeight = targetResolution.height
       if (ctx.canvas.width !== targetWidth || ctx.canvas.height !== targetHeight) {
         ctx.canvas.width = targetWidth
         ctx.canvas.height = targetHeight
@@ -263,8 +298,8 @@ self.onmessage = async (e) => {
 
   function clearCanvas() {
     if (ctx) {
-      const targetWidth = 640
-      const targetHeight = 360
+      const targetWidth = targetResolution.width
+      const targetHeight = targetResolution.height
       ctx.canvas.width = targetWidth
       ctx.canvas.height = targetHeight
       ctx.fillStyle = '#1a1a1a'

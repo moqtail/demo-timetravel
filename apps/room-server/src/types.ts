@@ -57,7 +57,7 @@ export interface RoomUser {
   hasScreenshare: boolean
 }
 
-export type TrackType = 'video' | 'audio' | 'chat'
+export type TrackType = 'video' | 'audio' | 'chat' | 'screenshare'
 
 export interface Track {
   kind: TrackType

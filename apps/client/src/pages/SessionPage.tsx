@@ -62,12 +62,17 @@ import {
   announceNamespaces,
   initializeChatMessageSender,
   initializeVideoEncoder,
+  initializeScreenshareEncoder,
   connectToRelay,
   setupTracks,
   startAudioEncoder,
   subscribeToChatTrack,
   onlyUseVideoSubscriber,
+  onlyUseScreenshareSubscriber,
+  startScreenshareEncoder,
   onlyUseAudioSubscriber,
+  resizeCanvasWorker,
+  clearScreenshareCanvas,
 } from '@/composables/useVideoPipeline'
 import { MOQtailClient } from 'moqtail-ts/client'
 import { NetworkTelemetry, ClockNormalizer } from 'moqtail-ts/util'
@@ -90,6 +95,9 @@ function SessionPage() {
   const { socket: contextSocket } = useSocket()
   const [users, setUsers] = useState<{ [K: string]: RoomUser }>({})
   const [remoteCanvasRefs, setRemoteCanvasRefs] = useState<{ [id: string]: React.RefObject<HTMLCanvasElement> }>({})
+  const [remoteScreenshareCanvasRefs, setRemoteScreenshareCanvasRefs] = useState<{
+    [id: string]: React.RefObject<HTMLCanvasElement>
+  }>({})
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [telemetryData, setTelemetryData] = useState<{
     [userId: string]: { latency: number; videoBitrate: number; audioBitrate: number }
@@ -101,15 +109,21 @@ function SessionPage() {
   const [timeRemaining, setTimeRemaining] = useState<string>('--:--')
   const [timeRemainingColor, setTimeRemainingColor] = useState<string>('text-green-400')
   const selfVideoRef = useRef<HTMLVideoElement>(null)
+  const selfScreenshareRef = useRef<HTMLVideoElement>(null)
   const selfMediaStream = useRef<MediaStream | null>(null)
+  const selfScreenshareStream = useRef<MediaStream | null>(null)
   const publisherInitialized = useRef<boolean>(false)
   const moqtailClientInitStarted = useRef<boolean>(false)
   const [pendingRoomClosedMessage, setPendingRoomClosedMessage] = useState<string | null>(null)
   const originalTitle = useRef<string>(document.title)
   const videoEncoderObjRef = useRef<any>(null)
+  const screenshareEncoderObjRef = useRef<any>(null)
   const audioEncoderObjRef = useRef<any>(null)
   const chatSenderRef = useRef<{ send: (msg: string) => void } | null>(null)
+  const tracksRef = useRef<any>(null)
   const offsetRef = useRef<number>(0)
+  const screenshareSubscriptionsRef = useRef<{ [userId: string]: { requestId: bigint; subscribed: boolean } }>({})
+  const moqClientRef = useRef<MOQtailClient | undefined>(undefined)
   const [mediaReady, setMediaReady] = useState(false)
   const [showInfoCards, setShowInfoCards] = useState<{ [userId: string]: boolean }>({})
   const [infoPanelType, setInfoPanelType] = useState<{ [userId: string]: 'network' | 'codec' }>({})
@@ -131,9 +145,12 @@ function SessionPage() {
     [userId: string]: {
       videoSubscribed: boolean
       audioSubscribed: boolean
+      screenshareSubscribed?: boolean
       videoRequestId?: bigint
       audioRequestId?: bigint
-      intentionallyUnsubscribed?: boolean // Track if user was intentionally unsubscribed from both tracks
+      screenshareRequestId?: bigint
+      intentionallyUnsubscribed?: boolean
+      screenshareIntentionallyUnsubscribed?: boolean
     }
   }>({})
 
@@ -494,97 +511,6 @@ function SessionPage() {
       return
     }
 
-    // If trying to toggle camera while screen sharing, stop screen sharing first
-
-    if (kind === 'cam' && isScreenSharing) {
-      handleToggleScreenShare() // This will stop screen sharing
-
-      // After screen sharing stops, toggle the camera
-
-      setTimeout(() => {
-        const setter = setisCamOn
-
-        setter((prev) => {
-          const newValue = !prev
-
-          setUsers((users) => {
-            const u = users[userId]
-
-            users[userId] = { ...u, hasVideo: newValue }
-
-            // Video track switching logic for camera
-
-            const audioTrack = selfMediaStream.current?.getAudioTracks()[0]
-
-            let newStream
-
-            if (newValue) {
-              navigator.mediaDevices.getUserMedia({ video: { aspectRatio: 16 / 9 } }).then((videoStream) => {
-                const realVideoTrack = videoStream.getVideoTracks()[0]
-
-                const oldVideoTrack = selfMediaStream.current?.getVideoTracks()[0]
-
-                if (oldVideoTrack) {
-                  oldVideoTrack.stop()
-
-                  selfMediaStream.current?.removeTrack(oldVideoTrack)
-                }
-
-                newStream = new MediaStream()
-
-                if (audioTrack) newStream.addTrack(audioTrack)
-
-                newStream.addTrack(realVideoTrack)
-
-                selfMediaStream.current = newStream
-
-                if (videoEncoderObjRef.current) {
-                  videoEncoderObjRef.current.offset = offsetRef.current
-
-                  videoEncoderObjRef.current.start(selfMediaStream.current)
-                }
-
-                if (selfVideoRef.current) {
-                  selfVideoRef.current.srcObject = newStream
-
-                  selfVideoRef.current.muted = true
-                }
-              })
-            } else {
-              const oldVideoTrack = selfMediaStream.current?.getVideoTracks()[0]
-
-              if (oldVideoTrack) {
-                oldVideoTrack.stop()
-
-                selfMediaStream.current?.removeTrack(oldVideoTrack)
-              }
-
-              newStream = new MediaStream()
-
-              if (audioTrack) newStream.addTrack(audioTrack)
-
-              selfMediaStream.current = newStream
-
-              if (selfVideoRef.current) selfVideoRef.current.srcObject = newStream
-
-              selfVideoRef.current!.muted = true
-
-              if (videoEncoderObjRef.current) {
-                videoEncoderObjRef.current.stop()
-              }
-            }
-
-            return users
-          })
-
-          contextSocket?.emit('toggle-button', { kind, value: newValue })
-
-          return newValue
-        })
-      }, 100) // Small delay to ensure screen sharing stops first
-
-      return
-    }
     const setter = kind === 'mic' ? setIsMicOn : setisCamOn
     setter((prev) => {
       const newValue = !prev
@@ -619,13 +545,13 @@ function SessionPage() {
               }
               if (selfVideoRef.current) {
                 selfVideoRef.current.srcObject = newStream
-                selfVideoRef.current.muted = true // Ensure muted
+                selfVideoRef.current.muted = true
               }
             })
           } else {
             const oldVideoTrack = selfMediaStream.current?.getVideoTracks()[0]
             if (oldVideoTrack) {
-              oldVideoTrack.stop() // This will turn off the camera indicator
+              oldVideoTrack.stop()
               selfMediaStream.current?.removeTrack(oldVideoTrack)
             }
             newStream = new MediaStream()
@@ -667,72 +593,136 @@ function SessionPage() {
         alert('Only one person can share their screen at a time.')
         return
       }
-      const oldVideoTrack = selfMediaStream.current?.getVideoTracks()[0]
-      if (oldVideoTrack) {
-        oldVideoTrack.stop()
-        selfMediaStream.current?.removeTrack(oldVideoTrack)
-      }
 
       try {
         const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true })
         const screenTrack = screenStream.getVideoTracks()[0]
-        const audioTrack = selfMediaStream.current?.getAudioTracks()[0]
-        const newStream = new MediaStream()
-        if (audioTrack) newStream.addTrack(audioTrack)
-        newStream.addTrack(screenTrack)
-        selfMediaStream.current = newStream
-        if (selfVideoRef.current) selfVideoRef.current.srcObject = newStream
-        if (selfVideoRef.current) selfVideoRef.current.muted = true // Ensure muted
-        if (videoEncoderObjRef.current) {
-          videoEncoderObjRef.current.offset = offsetRef.current
-          videoEncoderObjRef.current.start(selfMediaStream.current)
+
+        selfScreenshareStream.current = screenStream
+
+        console.log('Screenshare stream tracks:', screenStream.getTracks())
+
+        try {
+          if (!tracksRef.current) {
+            console.error('tracksRef.current is null - cannot start screenshare encoder')
+            return
+          }
+
+          if (screenshareEncoderObjRef.current) {
+            console.log('Cleaning up previous screenshare encoder')
+            try {
+              screenshareEncoderObjRef.current.stop()
+            } catch (error) {
+              console.error('Error stopping previous screenshare encoder:', error)
+            }
+            screenshareEncoderObjRef.current = null
+          }
+
+          const screenshareFullTrackName = getTrackname(roomState!.name, userId, 'screenshare')
+          console.log('screenshareFullTrackName:', screenshareFullTrackName)
+
+          const screenshareStreamController = tracksRef.current.getScreenshareStreamController()
+
+          const screenshareResult = await startScreenshareEncoder({
+            stream: screenStream,
+            screenshareFullTrackName,
+            screenshareStreamController,
+            publisherPriority: 1,
+            objectForwardingPreference: ObjectForwardingPreference.Subgroup,
+          })
+          console.log('screenshareResult:', screenshareResult)
+          screenshareEncoderObjRef.current = screenshareResult
+
+          const updateTrackRequest: UpdateTrackRequest = {
+            trackType: 'screenshare',
+            event: 'announce',
+          }
+          contextSocket?.emit('update-track', updateTrackRequest)
+          console.log('Screenshare track announced to other clients')
+        } catch (error) {
+          console.error('Failed to start screenshare encoder:', error)
+          if (selfScreenshareStream.current) {
+            selfScreenshareStream.current.getTracks().forEach((track) => track.stop())
+            selfScreenshareStream.current = null
+          }
+          return
         }
+
         setIsScreenSharing(true)
         contextSocket?.emit('screen-share-toggled', { userId, hasScreenshare: true })
         setUsers((users) => ({
           ...users,
-          [userId]: { ...users[userId], hasScreenshare: true, hasVideo: true },
+          [userId]: { ...users[userId], hasScreenshare: true },
         }))
+
         screenTrack.onended = () => {
+          console.log('Screen track ended - cleaning up screenshare')
+
           setIsScreenSharing(false)
-          setisCamOn(false) // Turn off video button state
           contextSocket?.emit('screen-share-toggled', { userId, hasScreenshare: false })
           setUsers((users) => ({
             ...users,
-            [userId]: { ...users[userId], hasScreenshare: false, hasVideo: false },
+            [userId]: { ...users[userId], hasScreenshare: false },
           }))
-          handleRestoreCameraAfterScreenShare()
+
+          if (screenshareEncoderObjRef.current) {
+            try {
+              screenshareEncoderObjRef.current.stop()
+            } catch (error) {
+              console.error('Error stopping screenshare encoder:', error)
+            }
+            screenshareEncoderObjRef.current = null
+          }
+
+          if (selfScreenshareStream.current) {
+            selfScreenshareStream.current.getTracks().forEach((track) => {
+              try {
+                track.stop()
+              } catch (error) {
+                console.error('Error stopping screenshare track:', error)
+              }
+            })
+            selfScreenshareStream.current = null
+          }
+
+          if (selfScreenshareRef.current) {
+            selfScreenshareRef.current.srcObject = null
+          }
         }
       } catch (err) {
         console.error('Failed to start screen sharing', err)
       }
     } else {
-      const screenTrack = selfMediaStream.current?.getVideoTracks()[0]
-      if (screenTrack) {
-        screenTrack.stop()
-        selfMediaStream.current?.removeTrack(screenTrack)
-      }
       setIsScreenSharing(false)
-      setisCamOn(false) // Turn off video button state
       contextSocket?.emit('screen-share-toggled', { userId, hasScreenshare: false })
       setUsers((users) => ({
         ...users,
-        [userId]: { ...users[userId], hasScreenshare: false, hasVideo: false },
+        [userId]: { ...users[userId], hasScreenshare: false },
       }))
-      handleRestoreCameraAfterScreenShare()
-    }
-  }
 
-  function handleRestoreCameraAfterScreenShare() {
-    const audioTrack = selfMediaStream.current?.getAudioTracks()[0]
-    const newStream = new MediaStream()
-    if (audioTrack) newStream.addTrack(audioTrack)
-    // Always turn off video when screen share ends
-    selfMediaStream.current = newStream
-    if (selfVideoRef.current) selfVideoRef.current.srcObject = newStream
-    selfVideoRef.current!.muted = true
-    if (videoEncoderObjRef.current) {
-      videoEncoderObjRef.current.stop()
+      if (screenshareEncoderObjRef.current) {
+        try {
+          screenshareEncoderObjRef.current.stop()
+        } catch (error) {
+          console.error('Error stopping screenshare encoder:', error)
+        }
+        screenshareEncoderObjRef.current = null
+      }
+
+      if (selfScreenshareStream.current) {
+        selfScreenshareStream.current.getTracks().forEach((track) => {
+          try {
+            track.stop()
+          } catch (error) {
+            console.error('Error stopping screenshare track:', error)
+          }
+        })
+        selfScreenshareStream.current = null
+      }
+
+      if (selfScreenshareRef.current) {
+        selfScreenshareRef.current.srcObject = null
+      }
     }
   }
 
@@ -773,7 +763,7 @@ function SessionPage() {
         const videoFullTrackName = getTrackname(roomName, userId, 'video')
         const audioFullTrackName = getTrackname(roomName, userId, 'audio')
         const chatFullTrackName = getTrackname(roomName, userId, 'chat')
-        //console.log('Constructed track names:', videoFullTrackName, audioFullTrackName);
+        const screenshareFullTrackName = getTrackname(roomName, userId, 'screenshare')
 
         const selfUser = roomState.users[userId]
         if (!selfUser) {
@@ -790,12 +780,19 @@ function SessionPage() {
         const chatTrack = selfUser?.publishedTracks['chat']
         const chatTrackAlias = chatTrack?.alias
 
+        const screenshareTrack = selfUser?.publishedTracks['screenshare']
+        const screenshareTrackAlias = screenshareTrack?.alias
+
         if (isNaN(videoTrackAlias ?? undefined)) {
           console.error('Video track alias not found for user:', userId)
           return
         }
         if (isNaN(audioTrackAlias ?? undefined)) {
           console.error('Audio track alias not found for user:', userId)
+          return
+        }
+        if (isNaN(screenshareTrackAlias ?? undefined)) {
+          console.error('Screenshare track alias not found for user:', userId)
           return
         }
 
@@ -811,10 +808,13 @@ function SessionPage() {
           audioFullTrackName,
           videoFullTrackName,
           chatFullTrackName,
+          screenshareFullTrackName,
           BigInt(audioTrackAlias),
           BigInt(videoTrackAlias),
           BigInt(chatTrackAlias),
+          BigInt(screenshareTrackAlias),
         )
+        tracksRef.current = tracks
 
         videoEncoderObjRef.current = initializeVideoEncoder({
           videoFullTrackName,
@@ -822,6 +822,14 @@ function SessionPage() {
           publisherPriority: 1,
           objectForwardingPreference: ObjectForwardingPreference.Subgroup,
         })
+
+        screenshareEncoderObjRef.current = initializeScreenshareEncoder({
+          screenshareFullTrackName,
+          screenshareStreamController: tracks.getScreenshareStreamController(),
+          publisherPriority: 1,
+          objectForwardingPreference: ObjectForwardingPreference.Subgroup,
+        })
+
         // Only start video encoder if we have video tracks
 
         const hasVideoTrack = selfMediaStream.current.getVideoTracks().length > 0
@@ -896,7 +904,8 @@ function SessionPage() {
       const initClient = async () => {
         const client = await connectToRelay(relayUrl + '/' + username)
         setMoqClient(client)
-        client.onDataReceived = (data) => {
+        moqClientRef.current = client // Store in ref for stable access
+        client.onDataReceived = (_data) => {
           // console.warn('Data received:', data)
         }
         //console.log('initClient', client)
@@ -906,7 +915,11 @@ function SessionPage() {
 
           Object.keys(roomState.users).forEach((uId) => initializeTelemetryForUser(uId))
           const canvasRefs = Object.fromEntries(otherUsers.map((uId) => [uId, React.createRef<HTMLCanvasElement>()]))
+          const screenshareCanvasRefs = Object.fromEntries(
+            otherUsers.map((uId) => [uId, React.createRef<HTMLCanvasElement>()]),
+          )
           setRemoteCanvasRefs(canvasRefs)
+          setRemoteScreenshareCanvasRefs(screenshareCanvasRefs)
         }
       }
 
@@ -923,11 +936,17 @@ function SessionPage() {
         ...prev,
         [user.id]: React.createRef<HTMLCanvasElement>(),
       }))
+      setRemoteScreenshareCanvasRefs((prev) => ({
+        ...prev,
+        [user.id]: React.createRef<HTMLCanvasElement>(),
+      }))
       setUserSubscriptions((prev) => ({
         ...prev,
         [user.id]: {
           videoSubscribed: false,
           audioSubscribed: false,
+          screenshareSubscribed: false,
+          screenshareIntentionallyUnsubscribed: false,
         },
       }))
     })
@@ -938,8 +957,16 @@ function SessionPage() {
         const updatedUser = prevUsers[response.userId]
         if (updatedUser) {
           const track = response.track
-          if (track.kind === 'video' || track.kind === 'audio' || track.kind === 'chat') {
+          if (
+            track.kind === 'video' ||
+            track.kind === 'audio' ||
+            track.kind === 'chat' ||
+            track.kind === 'screenshare'
+          ) {
             updatedUser.publishedTracks[track.kind] = track
+            console.log(
+              `Track updated for ${response.userId}: ${track.kind} - alias: ${track.alias}, announced: ${track.announced}`,
+            )
           }
         }
         return { ...prevUsers }
@@ -962,13 +989,32 @@ function SessionPage() {
       })
     })
     socket.on('screen-share-toggled', ({ userId: toggledUserId, hasScreenshare }) => {
+      console.log(`Screen share toggled for ${toggledUserId}: ${hasScreenshare}`)
+
       setUsers((prevUsers) => {
         if (!prevUsers[toggledUserId]) return prevUsers
+
+        if (!hasScreenshare && prevUsers[toggledUserId].hasScreenshare) {
+          console.log(`User ${toggledUserId} stopped screensharing, triggering unsubscription`)
+          unsubscribeFromScreenshare(toggledUserId, false)
+
+          const screenshareVirtualId = `${toggledUserId}-screenshare`
+          if (maximizedUserId === screenshareVirtualId) {
+            console.log(`Clearing maximized screenshare user ${screenshareVirtualId}`)
+            setMaximizedUserId(null)
+          }
+
+          setCodecData((prev) => {
+            const newData = { ...prev }
+            delete newData[screenshareVirtualId]
+            return newData
+          })
+        }
+
         return {
           ...prevUsers,
           [toggledUserId]: {
             ...prevUsers[toggledUserId],
-            hasVideo: hasScreenshare,
             hasScreenshare,
           },
         }
@@ -1121,6 +1167,22 @@ function SessionPage() {
     }
   }
 
+  const getScreenshareCodecData = () => {
+    const screenshareConfig = window.appSettings.screenshareEncoderConfig
+
+    return {
+      videoCodec: screenshareConfig.codec,
+      audioCodec: '0',
+      frameRate: screenshareConfig.framerate || 30,
+      sampleRate: 0,
+      resolution: `${screenshareConfig.width || 1920}x${screenshareConfig.height || 1080}`,
+      syncDrift: 0,
+      videoBitrate: screenshareConfig.bitrate,
+      audioBitrate: 0,
+      numberOfChannels: 0,
+    }
+  }
+
   const getOtherParticipantCodecData = () => {
     // TODO: this should be dynamic based on actual participant data
     const videoConfig = window.appSettings.videoEncoderConfig
@@ -1238,6 +1300,12 @@ function SessionPage() {
   }, [remoteCanvasRefs, users])
 
   useEffect(() => {
+    Object.values(remoteScreenshareCanvasRefs).forEach((ref) => {
+      handleRemoteScreenshare(ref)
+    })
+  }, [users, remoteScreenshareCanvasRefs, userSubscriptions])
+
+  useEffect(() => {
     const handlePopState = (_event: PopStateEvent) => {
       leaveRoom()
     }
@@ -1313,11 +1381,31 @@ function SessionPage() {
     return () => clearInterval(interval)
   }, [roomState?.created, sessionDurationMinutes])
 
+  useEffect(() => {
+    console.log('Screenshare useEffect triggered:', {
+      hasStream: !!selfScreenshareStream.current,
+      hasRef: !!selfScreenshareRef.current,
+      isScreenSharing,
+      streamTracks: selfScreenshareStream.current?.getTracks()?.length || 0,
+    })
+
+    if (selfScreenshareStream.current && selfScreenshareRef.current && isScreenSharing) {
+      console.log('Assigning screenshare stream to ref in useEffect')
+      selfScreenshareRef.current.srcObject = selfScreenshareStream.current
+      selfScreenshareRef.current.muted = true
+      console.log('Screenshare video element configured successfully:', selfScreenshareRef.current)
+    }
+  }, [isScreenSharing, selfScreenshareStream.current])
+
   function getUserCount() {
     return Object.entries(users).length
   }
 
-  function getTrackname(roomName: string, userId: string, kind: 'video' | 'audio' | 'chat'): FullTrackName {
+  function getTrackname(
+    roomName: string,
+    userId: string,
+    kind: 'video' | 'audio' | 'chat' | 'screenshare',
+  ): FullTrackName {
     // Returns a FullTrackName for the given room, user, and track kind
     return FullTrackName.tryNew(Tuple.fromUtf8Path(`/moqtail/${roomName}/${userId}`), new TextEncoder().encode(kind))
   }
@@ -1357,6 +1445,43 @@ function SessionPage() {
       } else if (!tracksReady) {
         console.log(
           `Not ready to subscribe to ${userId} yet - announced: ${announced}, video: ${videoTrackAlias}, audio: ${audioTrackAlias}`,
+        )
+      }
+    }
+  }
+
+  async function handleRemoteScreenshare(canvasRef: React.RefObject<HTMLCanvasElement>) {
+    if (!canvasRef?.current) return
+    if (!moqClient) return
+    if (canvasRef.current.dataset.status) return
+
+    const userId = canvasRef.current.id
+    const roomName = roomState?.name!
+    const user = users[userId]
+    const screenshareTrack = user?.publishedTracks?.screenshare
+    const screenshareTrackAlias = screenshareTrack?.alias
+    const announced = screenshareTrack?.announced
+    const currentSubscription = userSubscriptions[userId]
+    const isScreenshareSubscribed = currentSubscription?.screenshareSubscribed || false
+    const userHasScreenshare = user?.hasScreenshare || false
+    const wasScreenshareIntentionallyUnsubscribed = currentSubscription?.screenshareIntentionallyUnsubscribed === true
+
+    const tracksReady = screenshareTrackAlias && screenshareTrackAlias > 0
+    const shouldSubscribe =
+      tracksReady && userHasScreenshare && !isScreenshareSubscribed && !wasScreenshareIntentionallyUnsubscribed
+
+    if (shouldSubscribe) {
+      console.log(`Starting screenshare subscription to ${userId} - screenshare: ${screenshareTrackAlias}`)
+      setTimeout(async () => {
+        await subscribeToScreenshareTrack(roomName, userId, screenshareTrackAlias, canvasRef)
+      }, 500)
+    } else {
+      if (!userHasScreenshare && isScreenshareSubscribed) {
+        console.log(`User ${userId} stopped screensharing, cleaning up subscription`)
+        unsubscribeFromScreenshare(userId, false)
+      } else if (!tracksReady) {
+        console.log(
+          `Not ready to subscribe to screenshare for ${userId} yet - screenshareTrackAlias: ${screenshareTrackAlias}`,
         )
       }
     }
@@ -1489,6 +1614,148 @@ function SessionPage() {
     }
   }
 
+  async function subscribeToScreenshareTrack(
+    roomName: string,
+    userId: string,
+    screenshareTrackAlias: number,
+    screenshareCanvasRef: React.RefObject<HTMLCanvasElement>,
+    client: MOQtailClient | undefined = undefined,
+  ) {
+    try {
+      const the_client = client ? client : moqClient!
+
+      if (screenshareCanvasRef.current && !screenshareCanvasRef.current.dataset.status) {
+        const screenshareFullTrackName = getTrackname(roomName, userId, 'screenshare')
+        screenshareCanvasRef.current!.dataset.status = 'pending'
+
+        console.log(`Starting screenshare subscription for ${userId}`, {
+          trackName: screenshareFullTrackName,
+          trackAlias: screenshareTrackAlias,
+        })
+
+        initializeTelemetryForUser(userId)
+        const userTelemetry = telemetryInstances.current[userId]
+
+        const screenshareResult = await onlyUseScreenshareSubscriber(
+          the_client,
+          screenshareCanvasRef,
+          screenshareTrackAlias,
+          screenshareFullTrackName,
+          userTelemetry.video,
+        )()
+
+        if (screenshareResult && screenshareResult.videoRequestId) {
+          screenshareSubscriptionsRef.current[userId] = {
+            requestId: screenshareResult.videoRequestId,
+            subscribed: true,
+          }
+
+          setUserSubscriptions((prev) => ({
+            ...prev,
+            [userId]: {
+              ...prev[userId],
+              screenshareSubscribed: true,
+              screenshareRequestId: screenshareResult.videoRequestId,
+              screenshareIntentionallyUnsubscribed: false,
+            },
+          }))
+        }
+
+        screenshareCanvasRef.current!.dataset.status = screenshareResult ? 'playing' : ''
+      } else {
+        console.log(`Cannot subscribe to screenshare for ${userId}:`, {
+          hasCanvasRef: !!screenshareCanvasRef.current,
+          currentStatus: screenshareCanvasRef.current?.dataset.status,
+        })
+      }
+    } catch (err) {
+      console.error('Error in subscribing to screenshare', roomName, userId, err)
+      if (screenshareCanvasRef.current) screenshareCanvasRef.current.dataset.status = ''
+    }
+  }
+
+  const unsubscribeFromScreenshare = async (targetUserId: string, isManual: boolean = true) => {
+    const client = moqClientRef.current
+
+    if (!client || targetUserId === userId) {
+      console.warn(
+        `Cannot unsubscribe from screenshare: moqClient=${!!client}, targetUserId=${targetUserId}, userId=${userId}`,
+      )
+      return
+    }
+
+    const subscription = userSubscriptions[targetUserId]
+    const refSubscription = screenshareSubscriptionsRef.current[targetUserId]
+
+    const hasSubscription = subscription?.screenshareSubscribed || refSubscription?.subscribed
+    const requestId = subscription?.screenshareRequestId || refSubscription?.requestId
+
+    if (!hasSubscription || !requestId) {
+      console.warn(`No screenshare subscription found for user ${targetUserId}`, {
+        hasReactSubscription: subscription?.screenshareSubscribed,
+        hasRefSubscription: refSubscription?.subscribed,
+        reactRequestId: subscription?.screenshareRequestId,
+        refRequestId: refSubscription?.requestId,
+      })
+
+      delete screenshareSubscriptionsRef.current[targetUserId]
+      setUserSubscriptions((prev) => ({
+        ...prev,
+        [targetUserId]: {
+          ...prev[targetUserId],
+          screenshareSubscribed: false,
+          screenshareRequestId: undefined,
+          intentionallyUnsubscribed: true,
+        },
+      }))
+
+      const screenshareCanvasRef = remoteScreenshareCanvasRefs[targetUserId]
+      if (screenshareCanvasRef?.current) {
+        screenshareCanvasRef.current.dataset.status = ''
+        console.log(`Reset canvas status for ${targetUserId} screenshare (no subscription case)`)
+      }
+
+      return
+    }
+
+    let unsubscriptionSuccess = false
+
+    try {
+      console.log(`Attempting to unsubscribe from ${targetUserId} screenshare with requestId:`, requestId)
+      await client.unsubscribe(requestId)
+      console.log(`Successfully unsubscribed from ${targetUserId} screenshare`)
+      unsubscriptionSuccess = true
+    } catch (error) {
+      console.error(`Failed to unsubscribe from ${targetUserId} screenshare:`, error)
+    }
+
+    delete screenshareSubscriptionsRef.current[targetUserId]
+    setUserSubscriptions((prev) => ({
+      ...prev,
+      [targetUserId]: {
+        ...prev[targetUserId],
+        screenshareSubscribed: false,
+        screenshareRequestId: undefined,
+        screenshareIntentionallyUnsubscribed: isManual,
+      },
+    }))
+
+    const screenshareCanvasRef = remoteScreenshareCanvasRefs[targetUserId]
+    if (screenshareCanvasRef?.current) {
+      screenshareCanvasRef.current.dataset.status = ''
+      const canvas = screenshareCanvasRef.current
+      clearScreenshareCanvas(canvas)
+    }
+
+    console.log(
+      `Screenshare cleanup completed for ${targetUserId} (unsubscription: ${unsubscriptionSuccess ? 'success' : 'failed'})`,
+      {
+        refCleared: !screenshareSubscriptionsRef.current[targetUserId],
+        stateUpdate: 'pending...',
+      },
+    )
+  }
+
   function leaveRoom() {
     //console.log('Leaving room...');
 
@@ -1497,6 +1764,7 @@ function SessionPage() {
     document.title = originalTitle.current
 
     setMoqClient(undefined)
+    moqClientRef.current = undefined
     if (selfMediaStream.current) {
       const tracks = selfMediaStream.current.getTracks()
       tracks.forEach((track) => {
@@ -1749,6 +2017,34 @@ function SessionPage() {
     }
   }
 
+  const toggleScreenshareSubscription = async (targetUserId: string) => {
+    const subscription = userSubscriptions[targetUserId]
+    const isSubscribed = subscription?.screenshareSubscribed
+
+    if (isSubscribed) {
+      await unsubscribeFromScreenshare(targetUserId)
+    } else {
+      const canvasRef = remoteScreenshareCanvasRefs[targetUserId]
+      if (!canvasRef?.current) {
+        console.warn(`Cannot resubscribe to screenshare for ${targetUserId} - no canvas ref`)
+        return
+      }
+
+      const screenshareTrackAlias = parseInt(canvasRef.current.dataset.screensharetrackalias || '-1')
+      if (screenshareTrackAlias === -1) {
+        console.warn(`Cannot resubscribe to screenshare for ${targetUserId} - no track alias`)
+        return
+      }
+
+      if (!roomState) {
+        console.warn(`Cannot resubscribe to screenshare for ${targetUserId} - no room state`)
+        return
+      }
+
+      await subscribeToScreenshareTrack(roomState.name, targetUserId, screenshareTrackAlias, canvasRef)
+    }
+  }
+
   useEffect(() => {
     if (chatMessagesRef.current && !isUserScrolling) {
       chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight
@@ -1773,6 +2069,29 @@ function SessionPage() {
     .map((item) => item[1])
     .slice(0, 6)
 
+  const usersWithScreenshare = [...userList]
+  Object.entries(users).forEach(([userId, user]) => {
+    if (user.hasScreenshare && !usersWithScreenshare.find((u) => u.id === `${userId}-screenshare`)) {
+      const virtualUserId = `${userId}-screenshare`
+      usersWithScreenshare.push({
+        ...user,
+        id: virtualUserId,
+        name: `${user.name} - Screen`,
+        hasVideo: true,
+        hasAudio: false,
+        hasScreenshare: false,
+        originalUserId: userId,
+      } as any)
+
+      if (!codecData[virtualUserId]) {
+        setCodecData((prev) => ({
+          ...prev,
+          [virtualUserId]: getScreenshareCodecData(),
+        }))
+      }
+    }
+  })
+
   useEffect(() => {
     if (pageIndex > 0 && userCount <= 3) {
       setPageIndex(0)
@@ -1790,7 +2109,44 @@ function SessionPage() {
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  const usersToRender = isSmallScreen ? (pageIndex === 0 ? userList.slice(0, 3) : userList.slice(3, 6)) : userList
+  const usersToRender = isSmallScreen
+    ? pageIndex === 0
+      ? usersWithScreenshare.slice(0, 3)
+      : usersWithScreenshare.slice(3, 6)
+    : usersWithScreenshare
+
+  useEffect(() => {
+    if (maximizedUserId && !usersToRender.find((u) => u.id === maximizedUserId)) {
+      console.log(`Maximized user ${maximizedUserId} no longer exists, clearing maximized state`)
+      setMaximizedUserId(null)
+    }
+  }, [maximizedUserId, usersToRender])
+
+  useEffect(() => {
+    const handleCanvasResize = () => {
+      Object.keys(remoteScreenshareCanvasRefs).forEach((userId) => {
+        const canvasRef = remoteScreenshareCanvasRefs[userId]
+        if (canvasRef?.current) {
+          const isMaximized = maximizedUserId === `${userId}-screenshare`
+
+          if (isMaximized) {
+            const screenWidth = window.innerWidth
+            const screenHeight = window.innerHeight
+            const dpr = window.devicePixelRatio || 1
+
+            const maxWidth = Math.min(screenWidth * dpr, 2560)
+            const maxHeight = Math.min(screenHeight * dpr, 1440)
+
+            resizeCanvasWorker(canvasRef.current, maxWidth, maxHeight)
+          } else {
+            resizeCanvasWorker(canvasRef.current, 1280, 720)
+          }
+        }
+      })
+    }
+
+    handleCanvasResize()
+  }, [maximizedUserId, remoteScreenshareCanvasRefs])
 
   return (
     <div className="h-screen bg-gray-900 flex flex-col overflow-hidden" style={{ height: '100dvh' }}>
@@ -1826,22 +2182,47 @@ function SessionPage() {
                       : 'relative'
                 }`}
               >
-                {isSelf(user.id) ? (
+                {(user as any).originalUserId ? (
                   <>
-                    {/* Self participant video and canvas refs */}
+                    {/* This is a screenshare virtual user */}
+                    {isSelf((user as any).originalUserId) ? (
+                      <video ref={selfScreenshareRef} autoPlay muted className="w-full h-full object-cover" />
+                    ) : (
+                      <canvas
+                        ref={remoteScreenshareCanvasRefs[(user as any).originalUserId]}
+                        id={(user as any).originalUserId}
+                        data-screensharetrackalias={
+                          users[(user as any).originalUserId]?.publishedTracks?.screenshare?.alias
+                        }
+                        data-announced={users[(user as any).originalUserId]?.publishedTracks?.screenshare?.announced}
+                        style={{
+                          width: '100%',
+                          height: '100%',
+                          objectFit: 'contain',
+                          imageRendering: 'pixelated',
+                        }}
+                      />
+                    )}
+                    <div className="absolute bottom-1 left-1 bg-green-600 text-white text-xs px-1 rounded">
+                      Screen Share
+                    </div>
+                  </>
+                ) : isSelf(user.id) ? (
+                  <>
+                    {/* Self participant regular video */}
                     <video
                       ref={selfVideoRef}
                       autoPlay
                       muted
                       style={{
-                        transform: isScreenSharing ? 'none' : 'scaleX(-1)',
+                        transform: 'scaleX(-1)',
                         width: '100%',
                         height: '100%',
                         objectFit: 'cover',
                       }}
                     />
                     {/* Show initials when video is off */}
-                    {!user.hasVideo && !isScreenSharing && (
+                    {!user.hasVideo && (
                       <div className="absolute inset-0 flex items-center justify-center bg-gray-700">
                         <div
                           className={`w-20 h-20 rounded-full flex items-center justify-center ${getUserColor(user.id)}`}
@@ -1853,12 +2234,14 @@ function SessionPage() {
                   </>
                 ) : (
                   <>
+                    {/* Remote participant regular video */}
                     <canvas
                       ref={remoteCanvasRefs[user.id]}
                       id={user.id}
                       data-videotrackalias={user?.publishedTracks?.video?.alias}
                       data-audiotrackalias={user?.publishedTracks?.audio?.alias}
                       data-chattrackalias={user?.publishedTracks?.chat?.alias}
+                      data-screensharetrackalias={user?.publishedTracks?.screenshare?.alias}
                       data-announced={user?.publishedTracks?.video?.announced}
                       className="w-full h-full object-cover"
                     />
@@ -1874,50 +2257,52 @@ function SessionPage() {
                     )}
                   </>
                 )}
-                {/* Participant Info Overlay */}
-                <div className="absolute bottom-3 left-3 right-3 flex justify-between items-center">
-                  <div className="bg-black bg-opacity-60 px-2 py-1 rounded text-white text-sm font-medium">
-                    <div>
-                      {user.name} {isSelf(user.id) && '(You)'}
+                {/* Participant Info Overlay - Hide for screenshare virtual users */}
+                {!(user as any).originalUserId && (
+                  <div className="absolute bottom-3 left-3 right-3 flex justify-between items-center">
+                    <div className="bg-black bg-opacity-60 px-2 py-1 rounded text-white text-sm font-medium">
+                      <div>
+                        {user.name} {isSelf(user.id) && '(You)'}
+                      </div>
+                      {telemetryData[user.id] &&
+                        !isSelf(user.id) && ( // TODO: Calculate throughputs for self user
+                          <div className="hidden md:block text-xs text-gray-300 mt-1">
+                            {telemetryData[user.id].latency}ms | {telemetryData[user.id].videoBitrate.toFixed(0)}Kbit/s
+                            | {telemetryData[user.id].audioBitrate.toFixed(0)}Kbit/s
+                          </div>
+                        )}
                     </div>
-                    {telemetryData[user.id] &&
-                      !isSelf(user.id) && ( // TODO: Calculate throughputs for self user
-                        <div className="hidden md:block text-xs text-gray-300 mt-1">
-                          {telemetryData[user.id].latency}ms | {telemetryData[user.id].videoBitrate.toFixed(0)}Kbit/s |{' '}
-                          {telemetryData[user.id].audioBitrate.toFixed(0)}Kbit/s
-                        </div>
+                    <div className="flex space-x-1">
+                      {/* Rewind button for remote users */}
+                      {!isSelf(user.id) && (
+                        <button
+                          onClick={() => handleOpenRewindPlayer(user.id)}
+                          disabled={isFetching}
+                          className={`p-1 rounded transition-colors ${
+                            isFetching ? 'bg-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
+                          }`}
+                          title={isFetching ? 'Fetching rewind data...' : 'Rewind video'}
+                        >
+                          <RotateCcw className="w-3 h-3 text-white" />
+                        </button>
                       )}
+                      <div className={user.hasAudio ? 'bg-gray-700 p-1 rounded' : 'bg-red-600 p-1 rounded'}>
+                        {user.hasAudio ? (
+                          <Mic className="w-3 h-3 text-white" />
+                        ) : (
+                          <MicOff className="w-3 h-3 text-white" />
+                        )}
+                      </div>
+                      <div className={user.hasVideo ? 'bg-gray-700 p-1 rounded' : 'bg-red-600 p-1 rounded'}>
+                        {user.hasVideo ? (
+                          <Video className="w-3 h-3 text-white" />
+                        ) : (
+                          <VideoOff className="w-3 h-3 text-white" />
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex space-x-1">
-                    {/* Rewind button for remote users */}
-                    {!isSelf(user.id) && (
-                      <button
-                        onClick={() => handleOpenRewindPlayer(user.id)}
-                        disabled={isFetching}
-                        className={`p-1 rounded transition-colors ${
-                          isFetching ? 'bg-gray-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'
-                        }`}
-                        title={isFetching ? 'Fetching rewind data...' : 'Rewind video'}
-                      >
-                        <RotateCcw className="w-3 h-3 text-white" />
-                      </button>
-                    )}
-                    <div className={user.hasAudio ? 'bg-gray-700 p-1 rounded' : 'bg-red-600 p-1 rounded'}>
-                      {user.hasAudio ? (
-                        <Mic className="w-3 h-3 text-white" />
-                      ) : (
-                        <MicOff className="w-3 h-3 text-white" />
-                      )}
-                    </div>
-                    <div className={user.hasVideo ? 'bg-gray-700 p-1 rounded' : 'bg-red-600 p-1 rounded'}>
-                      {user.hasVideo ? (
-                        <Video className="w-3 h-3 text-white" />
-                      ) : (
-                        <VideoOff className="w-3 h-3 text-white" />
-                      )}
-                    </div>
-                  </div>
-                </div>
+                )}
                 {/* Screen sharing indicator (local only for now) */}
                 {user.hasScreenshare && (
                   <div className="absolute top-3 left-3 bg-green-600 px-2 py-1 rounded text-white text-xs font-medium">
@@ -1926,8 +2311,8 @@ function SessionPage() {
                 )}
                 {/* Info card toggle buttons */}
                 <div className="absolute top-3 right-3 flex space-x-1">
-                  {/* Subscription Controls - Only for remote users */}
-                  {!isSelf(user.id) && (
+                  {/* Subscription Controls - Only for remote users and not screenshare virtual users */}
+                  {!isSelf(user.id) && !(user as any).originalUserId && (
                     <>
                       {/* Video Subscription Toggle */}
                       <button
@@ -1961,22 +2346,37 @@ function SessionPage() {
                           <VolumeX className="w-4 h-4" />
                         )}
                       </button>
+                      {/* Screenshare Subscription Toggle - Only show if user has screenshare */}
+                      {user.hasScreenshare && (
+                        <button
+                          onClick={() => toggleScreenshareSubscription(user.id)}
+                          className={`p-1 rounded-full transition-all duration-200 ${
+                            userSubscriptions[user.id]?.screenshareSubscribed
+                              ? 'bg-green-600 hover:bg-green-700 text-white'
+                              : 'bg-gray-700 hover:bg-red-600 text-white'
+                          }`}
+                          title={`${userSubscriptions[user.id]?.screenshareSubscribed ? 'Unsubscribe from' : 'Subscribe to'} ${user.name}'s screenshare`}
+                        >
+                          <MonitorUp className="w-4 h-4" />
+                        </button>
+                      )}
                     </>
                   )}
-                  {/* Network Stats Button */}
-                  {!isSelf(user.id) && ( // TODO: Calculate throughputs for self user
-                    <button
-                      onClick={() => toggleInfoCard(user.id, 'network')}
-                      className={`p-1 rounded-full transition-all duration-200 ${
-                        showInfoCards[user.id] && infoPanelType[user.id] === 'network'
-                          ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                          : 'bg-gray-700 hover:bg-blue-600 text-white'
-                      }`}
-                      title="Network Statistics"
-                    >
-                      <Activity className="w-4 h-4" />
-                    </button>
-                  )}
+                  {/* Network Stats Button - Only for regular users, not screenshare virtual users */}
+                  {!isSelf(user.id) &&
+                    !(user as any).originalUserId && ( // TODO: Calculate throughputs for self user
+                      <button
+                        onClick={() => toggleInfoCard(user.id, 'network')}
+                        className={`p-1 rounded-full transition-all duration-200 ${
+                          showInfoCards[user.id] && infoPanelType[user.id] === 'network'
+                            ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                            : 'bg-gray-700 hover:bg-blue-600 text-white'
+                        }`}
+                        title="Network Statistics"
+                      >
+                        <Activity className="w-4 h-4" />
+                      </button>
+                    )}
                   {/* Media Info Button */}
                   <button
                     onClick={() => toggleInfoCard(user.id, 'codec')}
@@ -2222,9 +2622,11 @@ function SessionPage() {
                                     <div className="flex justify-between">
                                       <span className="text-gray-600">Sample Rate:</span>
                                       <span className="font-medium text-black">
-                                        {codecData[user.id]?.sampleRate
-                                          ? (codecData[user.id].sampleRate / 1000).toFixed(0) + 'k'
-                                          : '48k'}
+                                        {codecData[user.id]?.sampleRate !== undefined
+                                          ? codecData[user.id].sampleRate === 0
+                                            ? '0'
+                                            : (codecData[user.id].sampleRate / 1000).toFixed(0) + 'k'
+                                          : 'N/A'}
                                       </span>
                                     </div>
                                     {codecData[user.id]?.audioBitrate && (
