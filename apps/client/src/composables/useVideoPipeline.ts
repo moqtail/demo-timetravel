@@ -56,9 +56,11 @@ export function setupTracks(
   audioFullTrackName: FullTrackName,
   videoFullTrackName: FullTrackName,
   chatFullTrackName: FullTrackName,
+  screenshareFullTrackName: FullTrackName,
   audioTrackAlias: bigint,
   videoTrackAlias: bigint,
   chatTrackAlias: bigint,
+  screenshareTrackAlias: bigint,
 ) {
   let audioStreamController: ReadableStreamDefaultController<MoqtObject> | null = null
   const audioStream = new ReadableStream<MoqtObject>({
@@ -87,6 +89,15 @@ export function setupTracks(
       chatStreamController = null
     },
   })
+  let screenshareStreamController: ReadableStreamDefaultController<MoqtObject> | null = null
+  const screenshareStream = new ReadableStream<MoqtObject>({
+    start(controller) {
+      screenshareStreamController = controller
+    },
+    cancel() {
+      screenshareStreamController = null
+    },
+  })
   const audioContentSource = new LiveTrackSource(audioStream)
   moqClient.addOrUpdateTrack({
     fullTrackName: audioFullTrackName,
@@ -111,13 +122,23 @@ export function setupTracks(
     publisherPriority: 128, // Magic number
     trackAlias: chatTrackAlias,
   })
+  const screenshareContentSource = new LiveTrackSource(screenshareStream)
+  moqClient.addOrUpdateTrack({
+    fullTrackName: screenshareFullTrackName,
+    forwardingPreference: ObjectForwardingPreference.Subgroup,
+    trackSource: { live: screenshareContentSource },
+    publisherPriority: 128, // Magic number
+    trackAlias: screenshareTrackAlias,
+  })
   return {
     audioStream,
     videoStream,
     chatStream,
+    screenshareStream,
     getAudioStreamController: () => audioStreamController,
     getVideoStreamController: () => videoStreamController,
     getChatStreamController: () => chatStreamController,
+    getScreenshareStreamController: () => screenshareStreamController,
   }
 }
 
@@ -444,7 +465,9 @@ export function initializeVideoEncoder({
         console.error('Failed to create video reader')
         return
       }
-      readAndEncode(videoReader)
+      if (videoReader) {
+        readAndEncode(videoReader)
+      }
       return { videoEncoder, videoReader }
     },
     stop,
@@ -607,6 +630,330 @@ export async function startVideoEncoder({
   return { videoEncoder, videoReader, stop }
 }
 
+export function initializeScreenshareEncoder({
+  screenshareFullTrackName,
+  screenshareStreamController,
+  publisherPriority,
+  objectForwardingPreference,
+}: {
+  screenshareFullTrackName: FullTrackName
+  screenshareStreamController: ReadableStreamDefaultController<MoqtObject> | null
+  publisherPriority: number
+  objectForwardingPreference: ObjectForwardingPreference
+}) {
+  let videoEncoder: VideoEncoder | null = null
+  let encoderActive = true
+  let videoGroupId = 0
+  let videoObjectId = 0n
+  let isFirstKeyframeSent = false
+  let videoConfig: ArrayBuffer | null = null
+  let frameCounter = 0
+  const pendingVideoTimestamps: number[] = []
+  let videoReader: ReadableStreamDefaultReader<any> | null = null
+
+  const createVideoEncoder = () => {
+    isFirstKeyframeSent = false
+    videoObjectId = 0n
+    frameCounter = 0
+    pendingVideoTimestamps.length = 0
+
+    videoEncoder = new VideoEncoder({
+      output: async (chunk, meta) => {
+        if (chunk.type === 'key') {
+          videoGroupId++
+          videoObjectId = 0n
+        }
+
+        let captureTime = pendingVideoTimestamps.shift()
+        if (captureTime === undefined) {
+          console.warn('No capture time available for screenshare frame, skipping')
+          captureTime = Math.round(clock!.now())
+        }
+
+        const locHeaders = new ExtensionHeaders()
+          .addCaptureTimestamp(captureTime)
+          .addVideoFrameMarking(chunk.type === 'key' ? 1 : 0)
+
+        const desc = meta?.decoderConfig?.description
+        if (!isFirstKeyframeSent && desc instanceof ArrayBuffer) {
+          videoConfig = desc
+          locHeaders.addVideoConfig(new Uint8Array(desc))
+          isFirstKeyframeSent = true
+        }
+        if (isFirstKeyframeSent && videoConfig instanceof ArrayBuffer) {
+          locHeaders.addVideoConfig(new Uint8Array(videoConfig))
+        }
+
+        const frameData = new Uint8Array(chunk.byteLength)
+        chunk.copyTo(frameData)
+
+        const moqt = MoqtObject.newWithPayload(
+          screenshareFullTrackName,
+          new Location(BigInt(videoGroupId), BigInt(videoObjectId++)),
+          publisherPriority,
+          objectForwardingPreference,
+          0n,
+          locHeaders.build(),
+          frameData,
+        )
+        if (screenshareStreamController) {
+          screenshareStreamController.enqueue(moqt)
+        } else {
+          console.error('screenshareStreamController is not available')
+        }
+      },
+      error: console.error,
+    })
+    console.log('Configuring screenshare encoder with settings:', window.appSettings.screenshareEncoderConfig)
+    videoEncoder.configure(window.appSettings.screenshareEncoderConfig)
+  }
+
+  createVideoEncoder()
+
+  const stop = async () => {
+    encoderActive = false
+    if (videoReader) {
+      try {
+        await videoReader.cancel()
+      } catch (e) {
+        // ignore cancel errors
+      }
+      videoReader = null
+    }
+    if (videoEncoder) {
+      try {
+        await videoEncoder.flush()
+        videoEncoder.close()
+      } catch (e) {
+        // ignore close errors
+      }
+      videoEncoder = null
+    }
+  }
+
+  return {
+    videoEncoder,
+    encoderActive,
+    pendingVideoTimestamps,
+    frameCounter,
+    start: async (stream: MediaStream) => {
+      // Stop previous encoder and reset state
+      if (videoEncoder && encoderActive) {
+        encoderActive = false
+        await stop()
+      }
+
+      if (!stream) {
+        return { videoEncoder: null, videoReader: null }
+      }
+
+      encoderActive = true
+      createVideoEncoder()
+
+      const videoTrack = stream.getVideoTracks()[0]
+      if (!videoTrack) {
+        return { videoEncoder: null, videoReader: null }
+      }
+
+      videoReader = new (window as any).MediaStreamTrackProcessor({
+        track: videoTrack,
+      }).readable.getReader()
+
+      const readAndEncode = async (reader: ReadableStreamDefaultReader<any>) => {
+        while (encoderActive) {
+          try {
+            const result = await reader.read()
+            if (result.done) break
+
+            const captureTime = Math.round(clock!.now())
+            pendingVideoTimestamps.push(captureTime)
+
+            try {
+              if (videoEncoder && videoEncoder.state === 'configured') {
+                const keyFrameInterval =
+                  typeof window.appSettings.keyFrameInterval === 'number' ? window.appSettings.keyFrameInterval : 50
+                videoEncoder.encode(result.value, { keyFrame: frameCounter % keyFrameInterval === 0 })
+                frameCounter++
+              }
+            } catch (error) {
+              console.error('Error encoding screenshare frame:', error)
+            }
+
+            result.value.close()
+          } catch (error) {
+            if (encoderActive) {
+              console.error('Error reading screenshare frame:', error)
+            }
+            break
+          }
+        }
+      }
+
+      if (videoReader) {
+        readAndEncode(videoReader)
+      }
+      return { videoEncoder, videoReader }
+    },
+    stop,
+  }
+}
+
+export async function startScreenshareEncoder({
+  stream,
+  screenshareFullTrackName,
+  screenshareStreamController,
+  publisherPriority,
+  objectForwardingPreference,
+}: {
+  stream: MediaStream
+  screenshareFullTrackName: FullTrackName
+  screenshareStreamController: ReadableStreamDefaultController<MoqtObject> | null
+  publisherPriority: number
+  objectForwardingPreference: ObjectForwardingPreference
+}) {
+  if (!stream) {
+    console.error('No stream provided to screenshare encoder')
+    return { stop: async () => {} }
+  }
+
+  let videoEncoder: VideoEncoder | null = null
+  let videoReader: ReadableStreamDefaultReader<any> | null = null
+  let encoderActive = true
+  let videoGroupId = 0
+  let videoObjectId = 0n
+  let isFirstKeyframeSent = false
+  let videoConfig: ArrayBuffer | null = null
+  let frameCounter = 0
+  const pendingVideoTimestamps: number[] = []
+
+  const createVideoEncoder = () => {
+    isFirstKeyframeSent = false
+    videoGroupId = 0
+    videoObjectId = 0n
+    frameCounter = 0
+    pendingVideoTimestamps.length = 0
+    videoConfig = null
+
+    videoEncoder = new VideoEncoder({
+      output: async (chunk, meta) => {
+        if (chunk.type === 'key') {
+          videoGroupId++
+          videoObjectId = 0n
+        }
+
+        let captureTime = pendingVideoTimestamps.shift()
+        if (captureTime === undefined) {
+          console.warn('No capture time available for screenshare frame, skipping')
+          captureTime = Math.round(clock!.now())
+        }
+
+        const locHeaders = new ExtensionHeaders()
+          .addCaptureTimestamp(captureTime)
+          .addVideoFrameMarking(chunk.type === 'key' ? 1 : 0)
+
+        const desc = meta?.decoderConfig?.description
+        if (!isFirstKeyframeSent && desc instanceof ArrayBuffer) {
+          videoConfig = desc
+          locHeaders.addVideoConfig(new Uint8Array(desc))
+          isFirstKeyframeSent = true
+        }
+        if (isFirstKeyframeSent && videoConfig instanceof ArrayBuffer) {
+          locHeaders.addVideoConfig(new Uint8Array(videoConfig))
+        }
+
+        const frameData = new Uint8Array(chunk.byteLength)
+        chunk.copyTo(frameData)
+
+        const moqt = MoqtObject.newWithPayload(
+          screenshareFullTrackName,
+          new Location(BigInt(videoGroupId), BigInt(videoObjectId++)),
+          publisherPriority,
+          objectForwardingPreference,
+          0n,
+          locHeaders.build(),
+          frameData,
+        )
+        if (screenshareStreamController) {
+          screenshareStreamController.enqueue(moqt)
+        } else {
+          console.error('screenshareStreamController is not available')
+        }
+      },
+      error: console.error,
+    })
+    videoEncoder.configure(window.appSettings.screenshareEncoderConfig)
+  }
+
+  createVideoEncoder()
+
+  const videoTrack = stream.getVideoTracks()[0]
+  if (!videoTrack) {
+    console.error('No video track available in screenshare stream')
+    return { stop: async () => {} }
+  }
+
+  videoReader = new (window as any).MediaStreamTrackProcessor({
+    track: videoTrack,
+  }).readable.getReader()
+
+  const readAndEncode = async (reader: ReadableStreamDefaultReader<any>) => {
+    while (encoderActive) {
+      try {
+        const result = await reader.read()
+        if (result.done) break
+
+        const captureTime = Math.round(clock!.now())
+        pendingVideoTimestamps.push(captureTime)
+
+        try {
+          if (videoEncoder && videoEncoder.state === 'configured') {
+            const keyFrameInterval =
+              typeof window.appSettings.keyFrameInterval === 'number' ? window.appSettings.keyFrameInterval : 50
+            videoEncoder.encode(result.value, { keyFrame: frameCounter % keyFrameInterval === 0 })
+            frameCounter++
+          }
+        } catch (error) {
+          console.error('Error encoding screenshare frame:', error)
+        }
+
+        result.value.close()
+      } catch (error) {
+        if (encoderActive) {
+          console.error('Error reading screenshare frame:', error)
+        }
+        break
+      }
+    }
+  }
+
+  if (videoReader) {
+    readAndEncode(videoReader)
+  }
+
+  const stop = async () => {
+    encoderActive = false
+    if (videoReader) {
+      try {
+        await videoReader.cancel()
+      } catch (e) {
+        // ignore cancel errors
+      }
+      videoReader = null
+    }
+    if (videoEncoder) {
+      try {
+        await videoEncoder.flush()
+        videoEncoder.close()
+      } catch (e) {
+        // ignore close errors
+      }
+      videoEncoder = null
+    }
+  }
+
+  return { videoEncoder, videoReader, stop }
+}
+
 const canvasWorkerMap = new WeakMap<HTMLCanvasElement, Worker>()
 
 function getOrCreateWorkerAndCanvas(canvas: HTMLCanvasElement) {
@@ -636,6 +983,65 @@ function getOrCreateWorkerAndCanvas(canvas: HTMLCanvasElement) {
       console.error('Canvas control already transferred. This should not happen with proper cleanup.')
     }
     throw error
+  }
+}
+
+function getOrCreateScreenshareWorker(canvas: HTMLCanvasElement): Worker {
+  // Check if there's already a worker for this canvas
+  const existingWorker = canvasWorkerMap.get(canvas)
+  if (existingWorker) {
+    return existingWorker
+  }
+
+  try {
+    const worker = new DecodeWorker()
+    const offscreen = canvas.transferControlToOffscreen()
+    worker.postMessage(
+      {
+        type: 'init',
+        canvas: offscreen,
+        decoderConfig: window.appSettings.screenshareDecoderConfig,
+        contentType: 'screenshare',
+      },
+      [offscreen],
+    )
+
+    canvasWorkerMap.set(canvas, worker)
+
+    const originalTerminate = worker.terminate
+    worker.terminate = function () {
+      canvasWorkerMap.delete(canvas)
+      return originalTerminate.call(this)
+    }
+
+    return worker
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'InvalidStateError') {
+      console.error('Canvas control already transferred. This should not happen with proper cleanup.')
+    }
+    throw error
+  }
+}
+
+export function clearScreenshareCanvas(canvas: HTMLCanvasElement): boolean {
+  const worker = canvasWorkerMap.get(canvas)
+  if (worker) {
+    worker.postMessage({ type: 'clear' })
+    return true
+  }
+  console.warn('No worker found for canvas, cannot send clear message')
+  return false
+}
+
+export function resizeCanvasWorker(canvas: HTMLCanvasElement, newWidth: number, newHeight: number): void {
+  const worker = canvasWorkerMap.get(canvas)
+  if (worker) {
+    console.log(`Resizing canvas worker to ${newWidth}x${newHeight}`)
+    worker.postMessage({
+      type: 'resize',
+      newWidth,
+      newHeight,
+    })
   }
 }
 
@@ -755,15 +1161,20 @@ export function useVideoPublisher(
     }
     video.muted = true
     announceNamespaces(moqClient, videoFullTrackName.namespace)
-    // TODO: Add chat track
+    const screenshareFullTrackName = FullTrackName.tryNew(
+      videoFullTrackName.namespace,
+      new TextEncoder().encode('screenshare'),
+    )
     let tracks = setupTracks(
       moqClient,
       audioFullTrackName,
       videoFullTrackName,
       chatFullTrackName,
+      screenshareFullTrackName,
       BigInt(audioTrackAlias),
       BigInt(videoTrackAlias),
       BigInt(0), // chatTrackAlias
+      BigInt(99999), // screenshareTrackAlias placeholder
     )
 
     const videoPromise = startVideoEncoder({
@@ -897,6 +1308,57 @@ export function onlyUseVideoSubscriber(
       cleanup: () => {
         // ! Do not terminate the worker
         console.log('Video-only subscription cleanup called')
+      },
+    }
+  }
+  return setup
+}
+
+export function onlyUseScreenshareSubscriber(
+  moqClient: MOQtailClient,
+  canvasRef: RefObject<HTMLCanvasElement | null>,
+  screenshareTrackAlias: number,
+  screenshareFullTrackName: FullTrackName,
+  screenshareTelemetry?: NetworkTelemetry,
+) {
+  const setup = async (): Promise<{ videoRequestId?: bigint; cleanup: () => void }> => {
+    const canvas = canvasRef.current
+    console.log('Setting up screenshare-only subscription')
+    if (!canvas) return { cleanup: () => {} }
+
+    const worker = getOrCreateScreenshareWorker(canvas)
+
+    worker.onmessage = (event) => {
+      if (event.data.type === 'video-telemetry') {
+        if (screenshareTelemetry) {
+          screenshareTelemetry.push({
+            latency: Math.abs(event.data.latency),
+            size: event.data.throughput,
+          })
+        }
+      }
+    }
+
+    const videoRequestId = await subscribeAndPipeToWorker(
+      moqClient,
+      {
+        fullTrackName: screenshareFullTrackName,
+        groupOrder: GroupOrder.Original,
+        filterType: FilterType.LatestObject,
+        forward: true,
+        priority: 0,
+        trackAlias: screenshareTrackAlias,
+      },
+      worker,
+      'moq',
+    )
+    console.log('Subscribed to screenshare only', screenshareFullTrackName, 'with requestId:', videoRequestId)
+
+    return {
+      videoRequestId,
+      cleanup: () => {
+        // ! Do not terminate the worker
+        console.log('Screenshare-only subscription cleanup called')
       },
     }
   }

@@ -723,6 +723,7 @@ function newUser(userId: string, username: string) {
   user.publishedTracks.set('video', { kind: 'video', alias: lastTrackAlias++, announced: 0, published: 0 })
   user.publishedTracks.set('audio', { kind: 'audio', alias: lastTrackAlias++, announced: 0, published: 0 })
   user.publishedTracks.set('chat', { kind: 'chat', alias: lastTrackAlias++, announced: 0, published: 0 })
+  user.publishedTracks.set('screenshare', { kind: 'screenshare', alias: lastTrackAlias++, announced: 0, published: 0 })
 
   return user
 }
@@ -748,6 +749,7 @@ function toRoomUserView(user: RoomUser): RoomUserView {
       video: user.publishedTracks.get('video')!,
       audio: user.publishedTracks.get('audio')!,
       chat: user.publishedTracks.get('chat')!,
+      screenshare: user.publishedTracks.get('screenshare')!,
     },
     subscribedTracks: user.subscribedTracks,
   }

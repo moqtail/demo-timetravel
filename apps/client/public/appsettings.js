@@ -30,6 +30,20 @@ window.appSettings = {
     numberOfChannels: 1,
     bitrate: 48_000,
   },
+  screenshareEncoderConfig: {
+    codec: 'avc1.64001F',
+    width: 1280,
+    height: 720,
+    bitrate: 1_000_000,
+    framerate: 30,
+    latencyMode: 'realtime',
+    hardwareAcceleration: 'prefer-software',
+  },
+  screenshareDecoderConfig: {
+    codec: 'avc1.64001F',
+    optimizeForLatency: true,
+    hardwareAcceleration: 'prefer-software',
+  },
   keyFrameInterval: 50,
   clockNormalizationConfig: {
     timeServerUrl: 'https://time.akamai.com/?ms',
@@ -39,5 +53,12 @@ window.appSettings = {
     targetLatencyMs: 100,
     maxLatencyMs: 1000,
   },
-  frameTimeoutMs: 1000,
+  canvasResolutionConfig: {
+    screenshare: {
+      defaultWidth: 1280,
+      defaultHeight: 720,
+      maxWidth: 2560,
+      maxHeight: 1440,
+    },
+  },
 }

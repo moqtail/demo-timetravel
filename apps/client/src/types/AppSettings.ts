@@ -24,6 +24,8 @@ export interface AppSettings {
   audioEncoderConfig: AudioEncoderConfig
   videoDecoderConfig: VideoDecoderConfig
   audioDecoderConfig: AudioDecoderConfig
+  screenshareEncoderConfig: VideoEncoderConfig
+  screenshareDecoderConfig: VideoDecoderConfig
   keyFrameInterval: 'auto' | number
   clockNormalizationConfig: {
     timeServerUrl: string
@@ -33,5 +35,12 @@ export interface AppSettings {
     targetLatencyMs: number
     maxLatencyMs: number
   }
-  frameTimeoutMs: number
+  canvasResolutionConfig: {
+    screenshare: {
+      defaultWidth: number
+      defaultHeight: number
+      maxWidth: number
+      maxHeight: number
+    }
+  }
 }
