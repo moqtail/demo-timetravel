@@ -2134,12 +2134,19 @@ function SessionPage() {
             const screenHeight = window.innerHeight
             const dpr = window.devicePixelRatio || 1
 
-            const maxWidth = Math.min(screenWidth * dpr, 2560)
-            const maxHeight = Math.min(screenHeight * dpr, 1440)
+            const maxWidth = Math.min(screenWidth * dpr, window.appSettings.canvasResolutionConfig.screenshare.maxWidth)
+            const maxHeight = Math.min(
+              screenHeight * dpr,
+              window.appSettings.canvasResolutionConfig.screenshare.maxHeight,
+            )
 
             resizeCanvasWorker(canvasRef.current, maxWidth, maxHeight)
           } else {
-            resizeCanvasWorker(canvasRef.current, 1280, 720)
+            resizeCanvasWorker(
+              canvasRef.current,
+              window.appSettings.canvasResolutionConfig.screenshare.defaultWidth,
+              window.appSettings.canvasResolutionConfig.screenshare.defaultHeight,
+            )
           }
         }
       })

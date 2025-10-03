@@ -1,5 +1,5 @@
 window.appSettings = {
-  relayUrl: 'https://timetravel.moqtail.dev:4445',
+  relayUrl: 'https://localhost:4433',
   wsUrl: 'http://localhost:3001',
   wsPath: '/ws',
   posthog_host: 'https://eu.i.posthog.com',
@@ -52,5 +52,13 @@ window.appSettings = {
   playoutBufferConfig: {
     targetLatencyMs: 100,
     maxLatencyMs: 1000,
+  },
+  canvasResolutionConfig: {
+    screenshare: {
+      defaultWidth: 1280,
+      defaultHeight: 720,
+      maxWidth: 2560,
+      maxHeight: 1440,
+    },
   },
 }

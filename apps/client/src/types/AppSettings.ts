@@ -35,4 +35,12 @@ export interface AppSettings {
     targetLatencyMs: number
     maxLatencyMs: number
   }
+  canvasResolutionConfig: {
+    screenshare: {
+      defaultWidth: number
+      defaultHeight: number
+      maxWidth: number
+      maxHeight: number
+    }
+  }
 }
