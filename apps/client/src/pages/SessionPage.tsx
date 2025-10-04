@@ -170,6 +170,9 @@ function SessionPage() {
   const [isFetching, setIsFetching] = useState(false)
   const isRewindCleaningUp = useRef<boolean>(false)
 
+  type VideoQuality = 'SD' | 'HD'
+  const [userVideoQualities, setUserVideoQualities] = useState<{ [userId: string]: VideoQuality }>({})
+
   const emojiCategories = {
     Faces: ['😀', '😂', '😍', '😊', '😉', '😎', '🤔', '😮', '😢', '😭', '😡', '🤯', '🙄', '😴'],
     Gestures: ['👍', '👎', '👏', '🙌', '👋', '✌️', '🤞', '🤝', '🙏', '💪', '👌', '🤟', '✊', '👊'],
@@ -584,6 +587,26 @@ function SessionPage() {
   }
   const handleToggleMic = () => {
     handleToggle('mic')
+  }
+
+  const handleToggleRemoteUserQuality = (targetUserId: string) => {
+    if (isRewindCleaningUp.current) {
+      return
+    }
+
+    const currentQuality = userVideoQualities[targetUserId] || 'SD'
+    const newQuality: VideoQuality = currentQuality === 'SD' ? 'HD' : 'SD'
+
+    setUserVideoQualities((prev) => ({
+      ...prev,
+      [targetUserId]: newQuality,
+    }))
+
+    console.log(`Remote user ${targetUserId} video quality changed from ${currentQuality} to ${newQuality}`)
+    // TODO: Subsribe to HD Track if HD is accepted by
+    // TODO: the requested user or is already open, unsub
+    // TODO: from the SD track,
+    // TODO: and switch the canvas to the HD track.
   }
 
   const handleToggleScreenShare = async () => {
@@ -2252,6 +2275,22 @@ function SessionPage() {
                       data-announced={user?.publishedTracks?.video?.announced}
                       className="w-full h-full object-cover"
                     />
+
+                    {/* Video Quality Toggle Button for Remote User */}
+                    <div className="absolute top-3 left-3">
+                      <button
+                        onClick={() => handleToggleRemoteUserQuality(user.id)}
+                        className={`px-2 py-1 rounded-md transition-all duration-200 text-xs font-semibold min-w-[2.5rem] shadow-lg ${
+                          (userVideoQualities[user.id] || 'SD') === 'HD'
+                            ? 'bg-lime-600 hover:bg-lime-700 text-white'
+                            : 'bg-orange-600 hover:bg-orange-700 text-white'
+                        }`}
+                        disabled={isRewindCleaningUp.current}
+                        title={`Switch to ${(userVideoQualities[user.id] || 'SD') === 'SD' ? 'HD (1280x720)' : 'SD (640x360)'} quality`}
+                      >
+                        {userVideoQualities[user.id] || 'SD'}
+                      </button>
+                    </div>
                     {/* Show initials when remote video is off */}
                     {!user.hasVideo && (
                       <div className="absolute inset-0 flex items-center justify-center bg-gray-700">

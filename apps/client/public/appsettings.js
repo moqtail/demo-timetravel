@@ -4,8 +4,22 @@ window.appSettings = {
   wsPath: '/ws',
   posthog_host: 'https://eu.i.posthog.com',
   posthog_code: '***',
+  videoEncoderConfigHD: {
+    codec: 'avc1.42E01F',
+    width: 1280,
+    height: 720,
+    bitrate: 1_200_000,
+    framerate: 30,
+    latencyMode: 'realtime',
+    hardwareAcceleration: 'prefer-software',
+  },
+  videoDecoderConfigHD: {
+    codec: 'avc1.42E01F',
+    optimizeForLatency: true,
+    hardwareAcceleration: 'prefer-software',
+  },
   videoEncoderConfig: {
-    codec: 'avc1.42E01E',
+    codec: 'avc1.42E01F',
     width: 640,
     height: 360,
     bitrate: 300_000,
@@ -14,7 +28,7 @@ window.appSettings = {
     hardwareAcceleration: 'prefer-software',
   },
   videoDecoderConfig: {
-    codec: 'avc1.42E01E',
+    codec: 'avc1.42E01F',
     optimizeForLatency: true,
     hardwareAcceleration: 'prefer-software',
   },
