@@ -3,34 +3,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.relay
-    container_name: relay
     ports:
       - '4433:4433/udp'
     volumes:
-      - ./cert:/usr/src/app/moqtail/cert
-    networks:
-      - timetravel-net
+      - ./cert:/etc/relay/cert:ro
 
   room-server:
     build:
       context: ./apps/room-server
-      dockerfile: Dockerfile
-    container_name: room-server
     ports:
       - '3001:3001'
-    networks:
-      - timetravel-net
 
   client:
     build:
       context: ./apps/client
-      dockerfile: Dockerfile
-    container_name: client
     ports:
-      - '5173:5173'
-    networks:
-      - timetravel-net
-
-networks:
-  timetravel-net:
-    driver: bridge
+      - '4173:4173'
