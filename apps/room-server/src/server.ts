@@ -715,12 +715,14 @@ function newUser(userId: string, username: string) {
     publishedTracks: new Map(),
     subscribedTracks: [],
     hasVideo: false,
+    hasVideoHD: false,
     hasAudio: false,
     hasScreenshare: false,
   }
 
   // initialize tracks
   user.publishedTracks.set('video', { kind: 'video', alias: lastTrackAlias++, announced: 0, published: 0 })
+  user.publishedTracks.set('video-hd', { kind: 'video-hd', alias: lastTrackAlias++, announced: 0, published: 0 })
   user.publishedTracks.set('audio', { kind: 'audio', alias: lastTrackAlias++, announced: 0, published: 0 })
   user.publishedTracks.set('chat', { kind: 'chat', alias: lastTrackAlias++, announced: 0, published: 0 })
   user.publishedTracks.set('screenshare', { kind: 'screenshare', alias: lastTrackAlias++, announced: 0, published: 0 })
@@ -742,11 +744,13 @@ function toRoomUserView(user: RoomUser): RoomUserView {
     name: user.name,
     joined: user.joined,
     hasVideo: user.hasVideo,
+    hasVideoHD: user.hasVideoHD,
     hasAudio: user.hasAudio,
     hasScreenshare: user.hasScreenshare,
     // You may need to adjust the following lines based on the RoomUserView definition
     publishedTracks: {
       video: user.publishedTracks.get('video')!,
+      'video-hd': user.publishedTracks.get('video-hd')!,
       audio: user.publishedTracks.get('audio')!,
       chat: user.publishedTracks.get('chat')!,
       screenshare: user.publishedTracks.get('screenshare')!,
@@ -981,6 +985,8 @@ io.on('connection', (socket) => {
 
     if (request.kind === 'cam') {
       user.hasVideo = request.value
+    } else if (request.kind === 'cam-hd') {
+      user.hasVideoHD = request.value
     } else if (request.kind === 'mic') {
       user.hasAudio = request.value
     } else if (request.kind === 'screenshare') {
@@ -996,6 +1002,33 @@ io.on('connection', (socket) => {
     // notify other users
     console.debug('sending button-toggled', toggled, socket.id)
     socket.broadcast.to(roomName).emit('button-toggled', toggled)
+  })
+
+  socket.on('request-hd-video', ({ targetUserId, requesterId }) => {
+    const roomName = userRoomMapping.get(socket.id)
+
+    if (!roomName) {
+      const errorText = `Room (${roomName}) not found in userRoomMapping.`
+      console.warn(errorText, socket.id)
+      return
+    }
+
+    io.to(targetUserId).emit('request-hd-video', { requesterId: socket.id })
+    console.debug(`Forwarded HD video request from ${socket.id} to ${targetUserId}`)
+  })
+
+  socket.on('request-sd-video', ({ targetUserId, requesterId }) => {
+    console.debug('request-sd-video', { targetUserId, requesterId }, socket.id)
+    const roomName = userRoomMapping.get(socket.id)
+
+    if (!roomName) {
+      const errorText = `Room (${roomName}) not found in userRoomMapping.`
+      console.warn(errorText, socket.id)
+      return
+    }
+
+    io.to(targetUserId).emit('request-sd-video', { requesterId: socket.id })
+    console.debug(`Forwarded SD video request from ${socket.id} to ${targetUserId}`)
   })
 
   socket.on('disconnect', (reason: DisconnectReason, description?: any) => {

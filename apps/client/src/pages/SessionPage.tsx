@@ -62,16 +62,19 @@ import {
   announceNamespaces,
   initializeChatMessageSender,
   initializeVideoEncoder,
+  initializeVideoHDEncoder,
   initializeScreenshareEncoder,
   connectToRelay,
   setupTracks,
   startAudioEncoder,
   subscribeToChatTrack,
   onlyUseVideoSubscriber,
+  onlyUseVideoHDSubscriber,
   onlyUseScreenshareSubscriber,
   startScreenshareEncoder,
   onlyUseAudioSubscriber,
   resizeCanvasWorker,
+  resizeCanvasForMaximization,
   clearScreenshareCanvas,
 } from '@/composables/useVideoPipeline'
 import { MOQtailClient } from 'moqtail-ts/client'
@@ -117,6 +120,7 @@ function SessionPage() {
   const [pendingRoomClosedMessage, setPendingRoomClosedMessage] = useState<string | null>(null)
   const originalTitle = useRef<string>(document.title)
   const videoEncoderObjRef = useRef<any>(null)
+  const videoHDEncoderObjRef = useRef<any>(null)
   const screenshareEncoderObjRef = useRef<any>(null)
   const audioEncoderObjRef = useRef<any>(null)
   const chatSenderRef = useRef<{ send: (msg: string) => void } | null>(null)
@@ -124,6 +128,8 @@ function SessionPage() {
   const offsetRef = useRef<number>(0)
   const screenshareSubscriptionsRef = useRef<{ [userId: string]: { requestId: bigint; subscribed: boolean } }>({})
   const moqClientRef = useRef<MOQtailClient | undefined>(undefined)
+  const usersRef = useRef<{ [K: string]: RoomUser }>({})
+  const remoteCanvasRefsRef = useRef<{ [id: string]: React.RefObject<HTMLCanvasElement> }>({})
   const [mediaReady, setMediaReady] = useState(false)
   const [showInfoCards, setShowInfoCards] = useState<{ [userId: string]: boolean }>({})
   const [infoPanelType, setInfoPanelType] = useState<{ [userId: string]: 'network' | 'codec' }>({})
@@ -144,9 +150,11 @@ function SessionPage() {
   const [userSubscriptions, setUserSubscriptions] = useState<{
     [userId: string]: {
       videoSubscribed: boolean
+      videoHDSubscribed?: boolean
       audioSubscribed: boolean
       screenshareSubscribed?: boolean
       videoRequestId?: bigint
+      videoHDRequestId?: bigint
       audioRequestId?: bigint
       screenshareRequestId?: bigint
       intentionallyUnsubscribed?: boolean
@@ -172,6 +180,19 @@ function SessionPage() {
 
   type VideoQuality = 'SD' | 'HD'
   const [userVideoQualities, setUserVideoQualities] = useState<{ [userId: string]: VideoQuality }>({})
+  const userVideoQualitiesRef = useRef<{ [userId: string]: VideoQuality }>({})
+  const hdSubscriptionAttemptsRef = useRef<Set<string>>(new Set())
+  const manualQualityTransitionsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    userVideoQualitiesRef.current = userVideoQualities
+  }, [userVideoQualities])
+  useEffect(() => {
+    usersRef.current = users
+  }, [users])
+
+  useEffect(() => {
+    remoteCanvasRefsRef.current = remoteCanvasRefs
+  }, [remoteCanvasRefs])
 
   const emojiCategories = {
     Faces: ['😀', '😂', '😍', '😊', '😉', '😎', '🤔', '😮', '😢', '😭', '😡', '🤯', '🙄', '😴'],
@@ -546,6 +567,11 @@ function SessionPage() {
                 videoEncoderObjRef.current.offset = offsetRef.current
                 videoEncoderObjRef.current.start(selfMediaStream.current)
               }
+              //TODO: HOW TO CONTINUE HD VIDEO ENCODER
+              if (videoHDEncoderObjRef.current) {
+                videoHDEncoderObjRef.current.offset = offsetRef.current
+                videoHDEncoderObjRef.current.start(selfMediaStream.current)
+              }
               if (selfVideoRef.current) {
                 selfVideoRef.current.srcObject = newStream
                 selfVideoRef.current.muted = true
@@ -564,6 +590,10 @@ function SessionPage() {
             selfVideoRef.current!.muted = true
             if (videoEncoderObjRef.current) {
               videoEncoderObjRef.current.stop()
+            }
+            //TODO: HOW TO STOP HD VIDEO ENCODER
+            if (videoHDEncoderObjRef.current) {
+              videoHDEncoderObjRef.current.stop()
             }
           }
         }
@@ -589,7 +619,7 @@ function SessionPage() {
     handleToggle('mic')
   }
 
-  const handleToggleRemoteUserQuality = (targetUserId: string) => {
+  const handleToggleRemoteUserQuality = async (targetUserId: string) => {
     if (isRewindCleaningUp.current) {
       return
     }
@@ -597,16 +627,137 @@ function SessionPage() {
     const currentQuality = userVideoQualities[targetUserId] || 'SD'
     const newQuality: VideoQuality = currentQuality === 'SD' ? 'HD' : 'SD'
 
-    setUserVideoQualities((prev) => ({
-      ...prev,
-      [targetUserId]: newQuality,
-    }))
+    console.log(`Requesting ${newQuality} quality from remote user ${targetUserId}`)
+    manualQualityTransitionsRef.current.add(targetUserId)
 
-    console.log(`Remote user ${targetUserId} video quality changed from ${currentQuality} to ${newQuality}`)
-    // TODO: Subsribe to HD Track if HD is accepted by
-    // TODO: the requested user or is already open, unsub
-    // TODO: from the SD track,
-    // TODO: and switch the canvas to the HD track.
+    try {
+      if (currentQuality === 'HD' && newQuality === 'SD') {
+        console.log('Unsubscribing from HD video')
+        hdSubscriptionAttemptsRef.current.delete(targetUserId)
+        await unsubscribeFromHDVideo(targetUserId)
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      } else if (currentQuality === 'SD' && newQuality === 'HD') {
+        console.log('Unsubscribing from SD video')
+        hdSubscriptionAttemptsRef.current.delete(targetUserId)
+        await unsubscribeFromUser(targetUserId, 'video')
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+
+      if (newQuality === 'HD') {
+        contextSocket?.emit('request-hd-video', {
+          targetUserId,
+          requesterId: userId,
+        })
+        console.log(`Sent HD video request to user ${targetUserId}`)
+      } else {
+        contextSocket?.emit('request-sd-video', {
+          targetUserId,
+          requesterId: userId,
+        })
+        console.log(`Sent SD video request to user ${targetUserId}`)
+
+        const success = await subscribeToSDVideo(targetUserId)
+        if (success) {
+          console.log(`Successfully switched to SD video for ${targetUserId}`)
+        } else {
+          console.error(`Failed to switch to SD video for ${targetUserId}`)
+        }
+      }
+    } catch (error) {
+      console.error(`Error during quality transition for ${targetUserId}:`, error)
+    } finally {
+      manualQualityTransitionsRef.current.delete(targetUserId)
+    }
+
+    setUserVideoQualities((prev) => {
+      const newQualities = {
+        ...prev,
+        [targetUserId]: newQuality,
+      }
+      userVideoQualitiesRef.current = newQualities
+
+      return newQualities
+    })
+  }
+
+  const handleStartHDEncoding = () => {
+    if (isRewindCleaningUp.current) {
+      return
+    }
+
+    console.log('Starting HD encoding process...')
+
+    setUsers((users) => {
+      const u = users[userId]
+      users[userId] = { ...u, hasVideoHD: true }
+      return { ...users }
+    })
+
+    if (roomState) {
+      const roomName = roomState.name
+      const videoHDTrack = roomState.users[userId]?.publishedTracks['video-hd']
+
+      if (videoHDTrack && moqClientRef.current) {
+        // TODO: HD Track should be announced only when the user accepts
+        // TODO: Otherwise, SD should continue (the unsub should not happen)
+        console.log('Announcing HD track to server')
+        contextSocket?.emit('update-track', { trackType: 'video-hd', event: 'announce' })
+
+        if (selfMediaStream.current && tracksRef.current) {
+          if (!videoHDEncoderObjRef.current) {
+            const videoHDFullTrackName = getTrackname(roomName, userId, 'video-hd')
+            videoHDEncoderObjRef.current = initializeVideoHDEncoder({
+              videoHDFullTrackName,
+              videoHDStreamController: tracksRef.current.getVideoHDStreamController(),
+              publisherPriority: 1,
+              objectForwardingPreference: ObjectForwardingPreference.Subgroup,
+            })
+          }
+
+          if (videoHDEncoderObjRef.current) {
+            videoHDEncoderObjRef.current.offset = offsetRef.current
+            videoHDEncoderObjRef.current.start(selfMediaStream.current)
+            console.log('HD encoder started successfully')
+          }
+
+          contextSocket?.emit('update-track', { trackType: 'video-hd', event: 'publish' })
+        } else {
+          console.warn('Cannot start HD encoder - missing media stream or tracks')
+        }
+      } else {
+        console.warn('Cannot start HD encoding - missing video HD track or moqClient', {
+          hasVideoHDTrack: !!videoHDTrack,
+          hasMoqClient: !!moqClientRef.current,
+        })
+      }
+    } else {
+      console.warn('Cannot start HD encoding - no room state')
+    }
+
+    contextSocket?.emit('toggle-button', { kind: 'cam-hd', value: true })
+
+    console.log('Started HD encoding due to remote request')
+  }
+
+  const handleStopHDEncoding = () => {
+    if (isRewindCleaningUp.current) {
+      return
+    }
+
+    setUsers((users) => {
+      const u = users[userId]
+      users[userId] = { ...u, hasVideoHD: false }
+      return { ...users }
+    })
+
+    if (videoHDEncoderObjRef.current) {
+      videoHDEncoderObjRef.current.stop()
+      videoHDEncoderObjRef.current = null
+    }
+
+    contextSocket?.emit('toggle-button', { kind: 'cam-hd', value: false })
+
+    console.log('Stopped HD encoding due to remote request')
   }
 
   const handleToggleScreenShare = async () => {
@@ -784,6 +935,7 @@ function SessionPage() {
         }
 
         const videoFullTrackName = getTrackname(roomName, userId, 'video')
+        const videoHDFullTrackName = getTrackname(roomName, userId, 'video-hd')
         const audioFullTrackName = getTrackname(roomName, userId, 'audio')
         const chatFullTrackName = getTrackname(roomName, userId, 'chat')
         const screenshareFullTrackName = getTrackname(roomName, userId, 'screenshare')
@@ -796,6 +948,9 @@ function SessionPage() {
         //console.log('Self user found:', selfUser);
         const videoTrack = selfUser?.publishedTracks['video']
         const videoTrackAlias = videoTrack?.alias
+
+        const videoHDTrack = selfUser?.publishedTracks['video-hd']
+        const videoHDTrackAlias = videoHDTrack?.alias
 
         const audioTrack = selfUser?.publishedTracks['audio']
         const audioTrackAlias = audioTrack?.alias
@@ -830,10 +985,12 @@ function SessionPage() {
           moqClient!,
           audioFullTrackName,
           videoFullTrackName,
+          videoHDFullTrackName,
           chatFullTrackName,
           screenshareFullTrackName,
           BigInt(audioTrackAlias),
           BigInt(videoTrackAlias),
+          BigInt(videoHDTrackAlias),
           BigInt(chatTrackAlias),
           BigInt(screenshareTrackAlias),
         )
@@ -842,6 +999,13 @@ function SessionPage() {
         videoEncoderObjRef.current = initializeVideoEncoder({
           videoFullTrackName,
           videoStreamController: tracks.getVideoStreamController(),
+          publisherPriority: 1,
+          objectForwardingPreference: ObjectForwardingPreference.Subgroup,
+        })
+
+        videoHDEncoderObjRef.current = initializeVideoHDEncoder({
+          videoHDFullTrackName,
+          videoHDStreamController: tracks.getVideoHDStreamController(),
           publisherPriority: 1,
           objectForwardingPreference: ObjectForwardingPreference.Subgroup,
         })
@@ -967,6 +1131,7 @@ function SessionPage() {
         ...prev,
         [user.id]: {
           videoSubscribed: false,
+          videoHDSubscribed: false,
           audioSubscribed: false,
           screenshareSubscribed: false,
           screenshareIntentionallyUnsubscribed: false,
@@ -984,7 +1149,8 @@ function SessionPage() {
             track.kind === 'video' ||
             track.kind === 'audio' ||
             track.kind === 'chat' ||
-            track.kind === 'screenshare'
+            track.kind === 'screenshare' ||
+            track.kind === 'video-hd'
           ) {
             updatedUser.publishedTracks[track.kind] = track
             console.log(
@@ -994,6 +1160,47 @@ function SessionPage() {
         }
         return { ...prevUsers }
       })
+
+      // Handle HD video subscription outside of setState
+      if (response.track.kind === 'video-hd' && response.track.announced > 0) {
+        console.log('HD track announced, checking if we should subscribe...')
+
+        const currentQuality = userVideoQualitiesRef.current[response.userId]
+        console.log(`HD track announced by ${response.userId}, current requested quality: ${currentQuality}`)
+
+        if (currentQuality === 'HD') {
+          if (hdSubscriptionAttemptsRef.current.has(response.userId)) {
+            // Subscribe request already sent
+            return
+          }
+
+          console.log(`Auto-subscribing to HD video from ${response.userId}`)
+          hdSubscriptionAttemptsRef.current.add(response.userId)
+
+          setTimeout(() => {
+            const currentUsers = usersRef.current
+            const currentCanvasRefs = remoteCanvasRefsRef.current
+
+            subscribeToHDVideoWithState(response.userId, currentUsers, currentCanvasRefs)
+              .then((success) => {
+                if (success) {
+                  console.log(`HD subscription successful for ${response.userId}`)
+                } else {
+                  console.log(`HD subscription failed for ${response.userId}`)
+                }
+              })
+              .catch((error) => {
+                console.error(`HD subscription error for ${response.userId}:`, error)
+              })
+              .finally(() => {
+                // Always remove from attempts set when done
+                hdSubscriptionAttemptsRef.current.delete(response.userId)
+              })
+          }, 1000) // Increased delay to 1 second
+        } else {
+          console.log(`Not subscribing - current quality is ${currentQuality}, not HD`)
+        }
+      }
     })
 
     socket.on('button-toggled', (response: ToggleResponse) => {
@@ -1042,6 +1249,17 @@ function SessionPage() {
           },
         }
       })
+    })
+
+    // TODO: THE conditional accept should be added here
+    socket.on('request-hd-video', ({ requesterId }) => {
+      console.log(`User ${requesterId} requested HD video from me`)
+      handleStartHDEncoding()
+    })
+
+    socket.on('request-sd-video', ({ requesterId }) => {
+      console.log(`User ${requesterId} requested SD video from me`)
+      handleStopHDEncoding()
     })
 
     socket.on('user-disconnect', (msg: UserDisconnectedMessage) => {
@@ -1168,7 +1386,7 @@ function SessionPage() {
 
       setCodecData((prev) => ({
         ...prev,
-        [userId]: isSelf(userId) ? getSelfCodecData() : getOtherParticipantCodecData(),
+        [userId]: isSelf(userId) ? getSelfCodecData() : getOtherParticipantCodecData(userId),
       }))
     }
   }
@@ -1206,17 +1424,19 @@ function SessionPage() {
     }
   }
 
-  const getOtherParticipantCodecData = () => {
-    // TODO: this should be dynamic based on actual participant data
-    const videoConfig = window.appSettings.videoEncoderConfig
+  const getOtherParticipantCodecData = (userId?: string) => {
+    const currentQuality = userId ? userVideoQualities[userId] || 'SD' : 'SD'
+    const isHD = currentQuality === 'HD'
+
+    const videoConfig = isHD ? window.appSettings.videoEncoderConfigHD : window.appSettings.videoEncoderConfig
     const audioConfig = window.appSettings.audioEncoderConfig
 
     return {
       videoCodec: videoConfig.codec,
       audioCodec: audioConfig.codec,
-      frameRate: videoConfig.framerate || 30,
+      frameRate: videoConfig.framerate || 25,
       sampleRate: audioConfig.sampleRate || 48000,
-      resolution: `${videoConfig.width || 1280}x${videoConfig.height || 720}`,
+      resolution: `${videoConfig.width || (isHD ? 1280 : 640)}x${videoConfig.height || (isHD ? 720 : 360)}`,
       syncDrift: 0, // TODO
       videoBitrate: videoConfig.bitrate,
       audioBitrate: audioConfig.bitrate,
@@ -1329,6 +1549,17 @@ function SessionPage() {
   }, [users, remoteScreenshareCanvasRefs, userSubscriptions])
 
   useEffect(() => {
+    Object.keys(userVideoQualities).forEach((userId) => {
+      if (!isSelf(userId)) {
+        setCodecData((prev) => ({
+          ...prev,
+          [userId]: getOtherParticipantCodecData(userId),
+        }))
+      }
+    })
+  }, [userVideoQualities])
+
+  useEffect(() => {
     const handlePopState = (_event: PopStateEvent) => {
       leaveRoom()
     }
@@ -1427,7 +1658,7 @@ function SessionPage() {
   function getTrackname(
     roomName: string,
     userId: string,
-    kind: 'video' | 'audio' | 'chat' | 'screenshare',
+    kind: 'video' | 'video-hd' | 'audio' | 'chat' | 'screenshare',
   ): FullTrackName {
     // Returns a FullTrackName for the given room, user, and track kind
     return FullTrackName.tryNew(Tuple.fromUtf8Path(`/moqtail/${roomName}/${userId}`), new TextEncoder().encode(kind))
@@ -1447,11 +1678,17 @@ function SessionPage() {
     const announced = parseInt(canvasRef.current.dataset.announced || '0')
     const currentSubscription = userSubscriptions[userId]
     const isVideoSubscribed = currentSubscription?.videoSubscribed || false
+    const isVideoHDSubscribed = currentSubscription?.videoHDSubscribed || false
     const isAudioSubscribed = currentSubscription?.audioSubscribed || false
-    const isCompletelyUnsubscribed = !isVideoSubscribed && !isAudioSubscribed
+    const isCompletelyUnsubscribed = !isVideoSubscribed && !isVideoHDSubscribed && !isAudioSubscribed
     const tracksReady = announced > 0 && videoTrackAlias > 0 && audioTrackAlias > 0
     const wasIntentionallyUnsubscribed = currentSubscription?.intentionallyUnsubscribed === true
-    const shouldSubscribe = tracksReady && isCompletelyUnsubscribed && !wasIntentionallyUnsubscribed
+
+    const userHasHD = users[userId]?.hasVideoHD === true
+    // Skip automatic subscription if user is undergoing manual quality transition
+    const isInManualTransition = manualQualityTransitionsRef.current.has(userId)
+    const shouldSubscribe =
+      tracksReady && isCompletelyUnsubscribed && !wasIntentionallyUnsubscribed && !userHasHD && !isInManualTransition
 
     if (shouldSubscribe) {
       console.log(`Starting subscription to ${userId} - video: ${videoTrackAlias}, audio: ${audioTrackAlias}`)
@@ -1459,11 +1696,17 @@ function SessionPage() {
         await subscribeToTrack(roomName, userId, videoTrackAlias, audioTrackAlias, chatTrackAlias, canvasRef)
       }, 500)
     } else {
-      if (tracksReady && wasIntentionallyUnsubscribed) {
+      if (tracksReady && userHasHD) {
+        console.log(
+          `Skipping auto-subscription to ${userId} - user has HD video active, letting HD toggle logic handle it`,
+        )
+      } else if (tracksReady && isInManualTransition) {
+        console.log(`Skipping auto-subscription to ${userId} - user is undergoing manual quality transition`)
+      } else if (tracksReady && wasIntentionallyUnsubscribed) {
         console.log(`Skipping auto-subscription to ${userId} - user was intentionally unsubscribed from both tracks`)
       } else if (tracksReady && !isCompletelyUnsubscribed) {
         console.log(
-          `Skipping subscription to ${userId} - already subscribed (video: ${isVideoSubscribed}, audio: ${isAudioSubscribed})`,
+          `Skipping subscription to ${userId} - already subscribed (video: ${isVideoSubscribed}, videoHD: ${isVideoHDSubscribed}, audio: ${isAudioSubscribed})`,
         )
       } else if (!tracksReady) {
         console.log(
@@ -1483,7 +1726,6 @@ function SessionPage() {
     const user = users[userId]
     const screenshareTrack = user?.publishedTracks?.screenshare
     const screenshareTrackAlias = screenshareTrack?.alias
-    const announced = screenshareTrack?.announced
     const currentSubscription = userSubscriptions[userId]
     const isScreenshareSubscribed = currentSubscription?.screenshareSubscribed || false
     const userHasScreenshare = user?.hasScreenshare || false
@@ -1635,6 +1877,132 @@ function SessionPage() {
       // reset status
       if (canvasRef.current) canvasRef.current.dataset.status = ''
     }
+  }
+
+  async function subscribeToHDVideoWithState(
+    targetUserId: string,
+    currentUsers: { [K: string]: RoomUser },
+    currentCanvasRefs: { [id: string]: React.RefObject<HTMLCanvasElement> },
+  ): Promise<boolean> {
+    console.log(`🔍 subscribeToHDVideoWithState called for ${targetUserId}`)
+
+    if (!roomState || !moqClientRef.current) {
+      console.error('Room state or moqClient not available')
+      return false
+    }
+
+    const roomName = roomState.name
+    const targetUser = currentUsers[targetUserId]
+    const canvasRef = currentCanvasRefs[targetUserId]
+
+    if (!targetUser || !canvasRef?.current) {
+      console.error(`Target user ${targetUserId} or canvas not found`, {
+        targetUser,
+        canvasRef: canvasRef?.current,
+      })
+      return false
+    }
+
+    const videoHDTrack = targetUser.publishedTracks['video-hd']
+    if (!videoHDTrack || videoHDTrack.announced === 0) {
+      console.warn(`HD video track not available for user ${targetUserId}`, {
+        hasTrack: !!videoHDTrack,
+        announced: videoHDTrack?.announced,
+      })
+      return false
+    }
+
+    try {
+      const videoHDFullTrackName = getTrackname(roomName, targetUserId, 'video-hd')
+      initializeTelemetryForUser(targetUserId)
+      const userTelemetry = telemetryInstances.current[targetUserId]
+
+      const hdResult = await onlyUseVideoHDSubscriber(
+        moqClientRef.current,
+        canvasRef,
+        videoHDTrack.alias,
+        videoHDFullTrackName,
+        userTelemetry.video,
+      )()
+
+      if (hdResult.videoRequestId) {
+        setUserSubscriptions((prev) => ({
+          ...prev,
+          [targetUserId]: {
+            ...prev[targetUserId],
+            videoHDSubscribed: true,
+            videoHDRequestId: hdResult.videoRequestId,
+          },
+        }))
+        console.log(`Successfully subscribed to HD video for user ${targetUserId}`)
+        return true
+      }
+    } catch (error) {
+      console.error(`Failed to subscribe to HD video for user ${targetUserId}:`, error)
+    }
+    return false
+  }
+
+  async function subscribeToSDVideo(targetUserId: string): Promise<boolean> {
+    console.log(`subscribeToSDVideo called for ${targetUserId}`)
+
+    if (!roomState || !moqClientRef.current) {
+      console.error('Room state or moqClient not available for SD subscription')
+      return false
+    }
+
+    const canvasRef = remoteCanvasRefs[targetUserId]
+    if (!canvasRef?.current) {
+      console.error(`Canvas not found for SD subscription to ${targetUserId}`)
+      return false
+    }
+
+    const roomName = roomState.name
+    const videoTrackAlias = parseInt(canvasRef.current.dataset.videotrackalias || '-1')
+
+    if (videoTrackAlias === -1) {
+      console.error(`Video track alias not available for ${targetUserId}`)
+      return false
+    }
+
+    try {
+      const videoFullTrackName = getTrackname(roomName, targetUserId, 'video')
+      initializeTelemetryForUser(targetUserId)
+      const userTelemetry = telemetryInstances.current[targetUserId]
+
+      console.log(`About to subscribe to SD video:`, {
+        targetUserId,
+        trackAlias: videoTrackAlias,
+        fullTrackName: videoFullTrackName.toString(),
+      })
+
+      // Reset canvas status to allow subscription
+      canvasRef.current.dataset.status = ''
+
+      const sdResult = await onlyUseVideoSubscriber(
+        moqClientRef.current,
+        canvasRef,
+        videoTrackAlias,
+        videoFullTrackName,
+        userTelemetry.video,
+      )()
+
+      if (sdResult.videoRequestId) {
+        setUserSubscriptions((prev) => ({
+          ...prev,
+          [targetUserId]: {
+            ...prev[targetUserId],
+            videoSubscribed: true,
+            videoRequestId: sdResult.videoRequestId,
+          },
+        }))
+        console.log(`Successfully subscribed to SD video for user ${targetUserId}`)
+        return true
+      }
+    } catch (error) {
+      console.error(`Failed to subscribe to SD video for user ${targetUserId}:`, error)
+    }
+    return false
   }
 
   async function subscribeToScreenshareTrack(
@@ -1820,6 +2188,46 @@ function SessionPage() {
     window.location.href = '/'
   }
 
+  const unsubscribeFromHDVideo = async (targetUserId: string): Promise<boolean> => {
+    console.log(`🔍 unsubscribeFromHDVideo called for ${targetUserId}`)
+
+    if (!moqClient || targetUserId === userId) {
+      console.warn(
+        `Cannot unsubscribe from HD: moqClient=${!!moqClient}, targetUserId=${targetUserId}, userId=${userId}`,
+      )
+      return false
+    }
+
+    const subscription = userSubscriptions[targetUserId]
+    if (!subscription?.videoHDSubscribed || !subscription?.videoHDRequestId) {
+      console.warn(`No HD video subscription found for user ${targetUserId}`)
+      return false
+    }
+
+    try {
+      console.log(
+        `Attempting to unsubscribe from ${targetUserId} HD video with requestId:`,
+        subscription.videoHDRequestId,
+      )
+      await moqClient.unsubscribe(subscription.videoHDRequestId)
+      console.log(`Successfully unsubscribed from ${targetUserId} HD video`)
+
+      setUserSubscriptions((prev) => ({
+        ...prev,
+        [targetUserId]: {
+          ...prev[targetUserId],
+          videoHDSubscribed: false,
+          videoHDRequestId: undefined,
+        },
+      }))
+
+      return true
+    } catch (error) {
+      console.error(`Failed to unsubscribe from ${targetUserId} HD video:`, error)
+      return false
+    }
+  }
+
   const unsubscribeFromUser = async (targetUserId: string, type: 'video' | 'audio' | 'both') => {
     if (!moqClient || targetUserId === userId) {
       console.warn(`Cannot unsubscribe: moqClient=${!!moqClient}, targetUserId=${targetUserId}, userId=${userId}`)
@@ -1908,6 +2316,9 @@ function SessionPage() {
       const canvasRef = remoteCanvasRefs[targetUserId]
       if (canvasRef?.current) {
         canvasRef.current.dataset.status = ''
+        // Don't cleanup the canvas worker, just reset status
+        // The worker will be reused and reconfigured for HD if needed
+        console.log(`Reset canvas status for ${targetUserId}`)
       }
     }
   }
@@ -1931,9 +2342,11 @@ function SessionPage() {
       const currentSubscription = userSubscriptions[targetUserId]
 
       const hasVideoSub = currentSubscription?.videoSubscribed && currentSubscription?.videoRequestId !== undefined
+      const hasVideoHDSub =
+        currentSubscription?.videoHDSubscribed && currentSubscription?.videoHDRequestId !== undefined
       const hasAudioSub = currentSubscription?.audioSubscribed && currentSubscription?.audioRequestId !== undefined
 
-      const needsVideoSub = (type === 'video' || type === 'both') && !hasVideoSub
+      const needsVideoSub = (type === 'video' || type === 'both') && !hasVideoSub && !hasVideoHDSub
       const needsAudioSub = (type === 'audio' || type === 'both') && !hasAudioSub
 
       if (!needsVideoSub && !needsAudioSub) {
@@ -2178,6 +2591,19 @@ function SessionPage() {
     handleCanvasResize()
   }, [maximizedUserId, remoteScreenshareCanvasRefs])
 
+  // Handle canvas resizing for maximized regular videos
+  useEffect(() => {
+    Object.entries(remoteCanvasRefs).forEach(([userId, canvasRef]) => {
+      if (canvasRef?.current) {
+        const isMaximized = maximizedUserId === userId
+        const currentQuality = userVideoQualities[userId] || 'SD'
+        const isHD = currentQuality === 'HD'
+
+        resizeCanvasForMaximization(canvasRef.current, isMaximized, isHD)
+      }
+    })
+  }, [maximizedUserId, remoteCanvasRefs, userVideoQualities])
+
   return (
     <div className="h-screen bg-gray-900 flex flex-col overflow-hidden" style={{ height: '100dvh' }}>
       {/* Header */}
@@ -2269,10 +2695,12 @@ function SessionPage() {
                       ref={remoteCanvasRefs[user.id]}
                       id={user.id}
                       data-videotrackalias={user?.publishedTracks?.video?.alias}
+                      data-videohdalias={user?.publishedTracks?.['video-hd']?.alias}
                       data-audiotrackalias={user?.publishedTracks?.audio?.alias}
                       data-chattrackalias={user?.publishedTracks?.chat?.alias}
                       data-screensharetrackalias={user?.publishedTracks?.screenshare?.alias}
                       data-announced={user?.publishedTracks?.video?.announced}
+                      data-videoquality={userVideoQualities[user.id] || 'SD'}
                       className="w-full h-full object-cover"
                     />
 
@@ -2360,15 +2788,22 @@ function SessionPage() {
                   {/* Subscription Controls - Only for remote users and not screenshare virtual users */}
                   {!isSelf(user.id) && !(user as any).originalUserId && (
                     <>
-                      {/* Video Subscription Toggle */}
+                      {/* Video Subscription Toggle - Disabled in HD mode */}
                       <button
                         onClick={() => toggleUserSubscription(user.id, 'video')}
+                        disabled={(userVideoQualities[user.id] || 'SD') === 'HD'}
                         className={`p-1 rounded-full transition-all duration-200 ${
-                          userSubscriptions[user.id]?.videoSubscribed
-                            ? 'bg-green-600 hover:bg-green-700 text-white'
-                            : 'bg-gray-700 hover:bg-red-600 text-white'
+                          (userVideoQualities[user.id] || 'SD') === 'HD'
+                            ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
+                            : userSubscriptions[user.id]?.videoSubscribed
+                              ? 'bg-green-600 hover:bg-green-700 text-white'
+                              : 'bg-gray-700 hover:bg-red-600 text-white'
                         }`}
-                        title={`${userSubscriptions[user.id]?.videoSubscribed ? 'Unsubscribe from' : 'Subscribe to'} ${user.name}'s video`}
+                        title={
+                          (userVideoQualities[user.id] || 'SD') === 'HD'
+                            ? 'Video subscription controlled by HD toggle in HD mode'
+                            : `${userSubscriptions[user.id]?.videoSubscribed ? 'Unsubscribe from' : 'Subscribe to'} ${user.name}'s video`
+                        }
                       >
                         {userSubscriptions[user.id]?.videoSubscribed ? (
                           <Eye className="w-4 h-4" />

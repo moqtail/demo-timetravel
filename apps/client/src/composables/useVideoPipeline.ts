@@ -37,12 +37,7 @@ let clock: SocketClock
 export function setClock(c: SocketClock) {
   clock = c
 }
-setInterval(() => {
-  const localTime = Date.now()
-  const serverTime = clock.now()
-  const diff = localTime - serverTime
-  //console.log(`Local Time:${localTime} | Estimated Server Time:${serverTime}\nDifference:${diff}`)
-}, 2000)
+
 export async function connectToRelay(url: string) {
   return await MOQtailClient.new({ url, supportedVersions: [0xff00000b] })
 }
@@ -55,10 +50,12 @@ export function setupTracks(
   moqClient: MOQtailClient,
   audioFullTrackName: FullTrackName,
   videoFullTrackName: FullTrackName,
+  videoHDFullTrackName: FullTrackName,
   chatFullTrackName: FullTrackName,
   screenshareFullTrackName: FullTrackName,
   audioTrackAlias: bigint,
   videoTrackAlias: bigint,
+  videoHDTrackAlias: bigint,
   chatTrackAlias: bigint,
   screenshareTrackAlias: bigint,
 ) {
@@ -78,6 +75,15 @@ export function setupTracks(
     },
     cancel() {
       videoStreamController = null
+    },
+  })
+  let videoHDStreamController: ReadableStreamDefaultController<MoqtObject> | null = null
+  const videoHDStream = new ReadableStream<MoqtObject>({
+    start(controller) {
+      videoHDStreamController = controller
+    },
+    cancel() {
+      videoHDStreamController = null
     },
   })
   let chatStreamController: ReadableStreamDefaultController<MoqtObject> | null = null
@@ -114,6 +120,14 @@ export function setupTracks(
     publisherPriority: 128, // Magic number
     trackAlias: videoTrackAlias,
   })
+  const videoHDContentSource = new LiveTrackSource(videoHDStream)
+  moqClient.addOrUpdateTrack({
+    fullTrackName: videoHDFullTrackName,
+    forwardingPreference: ObjectForwardingPreference.Subgroup,
+    trackSource: { live: videoHDContentSource },
+    publisherPriority: 128, // Magic number
+    trackAlias: videoHDTrackAlias,
+  })
   const chatContentSource = new LiveTrackSource(chatStream)
   moqClient.addOrUpdateTrack({
     fullTrackName: chatFullTrackName,
@@ -133,10 +147,12 @@ export function setupTracks(
   return {
     audioStream,
     videoStream,
+    videoHDStream,
     chatStream,
     screenshareStream,
     getAudioStreamController: () => audioStreamController,
     getVideoStreamController: () => videoStreamController,
+    getVideoHDStreamController: () => videoHDStreamController,
     getChatStreamController: () => chatStreamController,
     getScreenshareStreamController: () => screenshareStreamController,
   }
@@ -630,6 +646,181 @@ export async function startVideoEncoder({
   return { videoEncoder, videoReader, stop }
 }
 
+export function initializeVideoHDEncoder({
+  videoHDFullTrackName,
+  videoHDStreamController,
+  publisherPriority,
+  objectForwardingPreference,
+}: {
+  videoHDFullTrackName: FullTrackName
+  videoHDStreamController: ReadableStreamDefaultController<MoqtObject> | null
+  publisherPriority: number
+  objectForwardingPreference: ObjectForwardingPreference
+}) {
+  let videoEncoder: VideoEncoder | null = null
+  let encoderActive = true
+  let videoGroupId = 0
+  let videoObjectId = 0n
+  let isFirstKeyframeSent = false
+  let videoConfig: ArrayBuffer | null = null
+  let frameCounter = 0
+  const pendingVideoTimestamps: number[] = []
+  let videoReader: ReadableStreamDefaultReader<any> | null = null
+
+  const createVideoEncoder = () => {
+    isFirstKeyframeSent = false
+    videoObjectId = 0n
+    frameCounter = 0
+    pendingVideoTimestamps.length = 0
+
+    videoEncoder = new VideoEncoder({
+      output: async (chunk, meta) => {
+        if (chunk.type === 'key') {
+          videoGroupId++
+          videoObjectId = 0n
+        }
+
+        let captureTime = pendingVideoTimestamps.shift()
+        if (captureTime === undefined) {
+          console.warn('No capture time available for HD video frame, skipping')
+          captureTime = Math.round(clock!.now())
+        }
+
+        const locHeaders = new ExtensionHeaders()
+          .addCaptureTimestamp(captureTime)
+          .addVideoFrameMarking(chunk.type === 'key' ? 1 : 0)
+
+        const desc = meta?.decoderConfig?.description
+        if (!isFirstKeyframeSent && desc instanceof ArrayBuffer) {
+          videoConfig = desc
+          locHeaders.addVideoConfig(new Uint8Array(desc))
+          isFirstKeyframeSent = true
+        }
+        if (isFirstKeyframeSent && videoConfig instanceof ArrayBuffer) {
+          locHeaders.addVideoConfig(new Uint8Array(videoConfig))
+        }
+        const frameData = new Uint8Array(chunk.byteLength)
+        chunk.copyTo(frameData)
+
+        const moqt = MoqtObject.newWithPayload(
+          videoHDFullTrackName,
+          new Location(BigInt(videoGroupId), BigInt(videoObjectId++)),
+          publisherPriority,
+          objectForwardingPreference,
+          0n,
+          locHeaders.build(),
+          frameData,
+        )
+        videoHDStreamController?.enqueue(moqt)
+
+        if (!isFirstKeyframeSent) {
+          console.log('First HD video keyframe sent')
+          isFirstKeyframeSent = true
+        }
+      },
+      error: (error) => {
+        console.error('HD Video encoding error:', error)
+      },
+    })
+
+    videoEncoder.configure(window.appSettings.videoEncoderConfigHD)
+
+    return videoEncoder
+  }
+
+  const stop = async () => {
+    encoderActive = false
+    if (videoReader) {
+      try {
+        await videoReader.cancel()
+      } catch (e) {
+        // ignore cancel errors
+      }
+      videoReader = null
+    }
+    if (videoEncoder) {
+      try {
+        await videoEncoder.flush()
+        videoEncoder.close()
+      } catch (e) {
+        // ignore close errors
+      }
+      videoEncoder = null
+    }
+  }
+
+  return {
+    videoEncoder,
+    encoderActive,
+    pendingVideoTimestamps,
+    frameCounter,
+    start: async (stream: MediaStream) => {
+      // Stop previous encoder and reset state
+      if (videoEncoder && encoderActive) {
+        encoderActive = false
+        await stop()
+      }
+
+      if (!stream) {
+        return { videoEncoder: null, videoReader: null }
+      }
+
+      encoderActive = true
+      createVideoEncoder()
+
+      const videoTrack = stream.getVideoTracks()[0]
+      if (!videoTrack) {
+        return { videoEncoder: null, videoReader: null }
+      }
+
+      videoReader = new (window as any).MediaStreamTrackProcessor({
+        track: videoTrack,
+      }).readable.getReader()
+
+      const readAndEncode = async (reader: ReadableStreamDefaultReader<any>) => {
+        while (encoderActive) {
+          try {
+            const result = await reader.read()
+            if (result.done) break
+
+            const captureTime = Math.round(clock!.now())
+            pendingVideoTimestamps.push(captureTime)
+
+            // Use HD settings for keyframe interval - higher framerate
+            const keyFrameInterval =
+              typeof window.appSettings.keyFrameInterval === 'number' ? window.appSettings.keyFrameInterval : 50
+            const insert_keyframe = frameCounter % keyFrameInterval === 0
+
+            try {
+              videoEncoder?.encode(result.value, { keyFrame: insert_keyframe })
+              frameCounter++
+            } catch (encodeError) {
+              console.error('Error encoding HD video frame:', encodeError)
+            } finally {
+              if (result.value && typeof result.value.close === 'function') {
+                result.value.close()
+              }
+            }
+          } catch (readError) {
+            console.error('Error reading HD video frame:', readError)
+            if (!encoderActive) break
+          }
+        }
+      }
+
+      if (!videoReader) {
+        console.error('Failed to create HD video reader')
+        return { videoEncoder: null, videoReader: null }
+      }
+      readAndEncode(videoReader)
+
+      return { videoEncoder, videoReader }
+    },
+    stop,
+    createVideoEncoder,
+  }
+}
+
 export function initializeScreenshareEncoder({
   screenshareFullTrackName,
   screenshareStreamController,
@@ -959,6 +1150,16 @@ const canvasWorkerMap = new WeakMap<HTMLCanvasElement, Worker>()
 function getOrCreateWorkerAndCanvas(canvas: HTMLCanvasElement) {
   const existingWorker = canvasWorkerMap.get(canvas)
   if (existingWorker) {
+    existingWorker.postMessage({
+      type: 'updateDecoderConfig',
+      decoderConfig: window.appSettings.videoDecoderConfig,
+    })
+
+    resizeCanvasWorker(
+      canvas,
+      window.appSettings.videoDecoderConfig.codedHeight || 640,
+      window.appSettings.videoDecoderConfig.codedWidth || 360,
+    )
     return existingWorker
   }
 
@@ -983,6 +1184,79 @@ function getOrCreateWorkerAndCanvas(canvas: HTMLCanvasElement) {
       console.error('Canvas control already transferred. This should not happen with proper cleanup.')
     }
     throw error
+  }
+}
+
+function getOrCreateHDWorkerAndCanvas(canvas: HTMLCanvasElement) {
+  const existingWorker = canvasWorkerMap.get(canvas)
+  if (existingWorker) {
+    existingWorker.postMessage({
+      type: 'updateDecoderConfig',
+      decoderConfig: window.appSettings.videoDecoderConfigHD,
+    })
+
+    resizeCanvasWorker(
+      canvas,
+      window.appSettings.videoDecoderConfigHD.codedWidth || 1280,
+      window.appSettings.videoDecoderConfigHD.codedHeight || 720,
+    )
+    return existingWorker
+  }
+
+  try {
+    const worker = new DecodeWorker()
+    const offscreen = canvas.transferControlToOffscreen()
+    worker.postMessage(
+      {
+        type: 'init',
+        canvas: offscreen,
+        decoderConfig: window.appSettings.videoDecoderConfigHD,
+      },
+      [offscreen],
+    )
+
+    canvasWorkerMap.set(canvas, worker)
+
+    const originalTerminate = worker.terminate
+    worker.terminate = function () {
+      canvasWorkerMap.delete(canvas)
+      return originalTerminate.call(this)
+    }
+
+    return worker
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'InvalidStateError') {
+      console.error('Canvas control already transferred. This should not happen with proper cleanup.')
+    }
+    throw error
+  }
+}
+
+export function updateWorkerForQuality(canvas: HTMLCanvasElement, isHD: boolean) {
+  const worker = canvasWorkerMap.get(canvas)
+  if (worker) {
+    const decoderConfig = isHD ? window.appSettings.videoDecoderConfigHD : window.appSettings.videoDecoderConfig
+    worker.postMessage({
+      type: 'updateDecoderConfig',
+      decoderConfig,
+    })
+
+    // Resize canvas to match the quality
+    if (isHD) {
+      resizeCanvasWorker(
+        canvas,
+        window.appSettings.videoDecoderConfigHD.codedWidth || 1280,
+        window.appSettings.videoDecoderConfigHD.codedHeight || 720,
+      )
+    } else {
+      resizeCanvasWorker(
+        canvas,
+        window.appSettings.videoDecoderConfig.codedWidth || 640,
+        window.appSettings.videoDecoderConfig.codedHeight || 360,
+      )
+    }
+
+    console.log(`Updated worker decoder config and canvas size for ${isHD ? 'HD (1280x720)' : 'SD (640x360)'} quality`)
   }
 }
 
@@ -1045,6 +1319,38 @@ export function resizeCanvasWorker(canvas: HTMLCanvasElement, newWidth: number, 
   }
 }
 
+export function resizeCanvasForMaximization(
+  canvas: HTMLCanvasElement,
+  isMaximized: boolean,
+  isHD: boolean = false,
+): void {
+  if (isMaximized) {
+    // When maximized, use a higher resolution for better quality
+    // Scale up from the source resolution to reduce pixelation
+    const targetWidth = isHD ? 1920 : 1280 // Higher resolution for maximized view
+    const targetHeight = isHD ? 1080 : 720
+    resizeCanvasWorker(canvas, targetWidth, targetHeight)
+    console.log(`Resized canvas for maximized view: ${targetWidth}x${targetHeight} (${isHD ? 'HD' : 'SD'} source)`)
+  } else {
+    // When not maximized, use the original video resolution
+    const originalWidth = isHD ? 1280 : 640
+    const originalHeight = isHD ? 720 : 360
+    resizeCanvasWorker(canvas, originalWidth, originalHeight)
+    console.log(`Resized canvas for normal view: ${originalWidth}x${originalHeight} (${isHD ? 'HD' : 'SD'} source)`)
+  }
+}
+
+export function cleanupCanvasWorker(canvas: HTMLCanvasElement): boolean {
+  const worker = canvasWorkerMap.get(canvas)
+  if (worker) {
+    console.log('Terminating canvas worker for cleanup')
+    worker.terminate()
+    canvasWorkerMap.delete(canvas)
+    return true
+  }
+  return false
+}
+
 async function setupAudioPlayback(audioContext: AudioContext) {
   await audioContext.audioWorklet.addModule(PCMPlayerProcessorURL)
   const audioNode = new AudioWorkletNode(audioContext, 'pcm-player-processor')
@@ -1086,7 +1392,6 @@ function subscribeAndPipeToWorker(
             extensions: obj.extensionHeaders,
             payload: obj,
             serverTimestamp: clock!.now(),
-            frameTimeoutMs: window.appSettings.frameTimeoutMs,
           },
           [obj.payload.buffer],
         )
@@ -1165,14 +1470,20 @@ export function useVideoPublisher(
       videoFullTrackName.namespace,
       new TextEncoder().encode('screenshare'),
     )
+    const videoHDFullTrackName = FullTrackName.tryNew(
+      videoFullTrackName.namespace,
+      new TextEncoder().encode('video-hd'),
+    )
     let tracks = setupTracks(
       moqClient,
       audioFullTrackName,
       videoFullTrackName,
+      videoHDFullTrackName,
       chatFullTrackName,
       screenshareFullTrackName,
       BigInt(audioTrackAlias),
       BigInt(videoTrackAlias),
+      BigInt(99998), // videoHDTrackAlias placeholder
       BigInt(0), // chatTrackAlias
       BigInt(99999), // screenshareTrackAlias placeholder
     )
@@ -1308,6 +1619,55 @@ export function onlyUseVideoSubscriber(
       cleanup: () => {
         // ! Do not terminate the worker
         console.log('Video-only subscription cleanup called')
+      },
+    }
+  }
+  return setup
+}
+
+export function onlyUseVideoHDSubscriber(
+  moqClient: MOQtailClient,
+  canvasRef: RefObject<HTMLCanvasElement | null>,
+  videoHDTrackAlias: number,
+  videoHDFullTrackName: FullTrackName,
+  videoTelemetry?: NetworkTelemetry,
+) {
+  const setup = async (): Promise<{ videoRequestId?: bigint; cleanup: () => void }> => {
+    const canvas = canvasRef.current
+    if (!canvas) return { cleanup: () => {} }
+
+    const worker = getOrCreateHDWorkerAndCanvas(canvas)
+
+    worker.onmessage = (event) => {
+      if (event.data.type === 'video-telemetry') {
+        if (videoTelemetry) {
+          videoTelemetry.push({
+            latency: Math.abs(event.data.latency),
+            size: event.data.throughput,
+          })
+        }
+      }
+    }
+
+    const videoRequestId = await subscribeAndPipeToWorker(
+      moqClient,
+      {
+        fullTrackName: videoHDFullTrackName,
+        groupOrder: GroupOrder.Original,
+        filterType: FilterType.LatestObject,
+        forward: true,
+        priority: 0,
+        trackAlias: videoHDTrackAlias,
+      },
+      worker,
+      'moq',
+    )
+    console.log('Subscribed to HD video only', videoHDFullTrackName, 'with requestId:', videoRequestId)
+
+    return {
+      videoRequestId,
+      cleanup: () => {
+        console.log('HD Video-only subscription cleanup called')
       },
     }
   }
