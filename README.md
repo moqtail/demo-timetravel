@@ -1,70 +1,22 @@
 # Time Travel in MOQ Conferencing
 
-## 🚀 Getting Started
-
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v20+ recommended)
-- [npm](https://www.npmjs.com/)
-- [MOQtail Relay](https://github.com/streaming-university/moqtail) running with valid certificates
+- Docker
+- Local certificates
 
-### Running the Development Server
-
-```bash
-cd ./apps/client
-
-# Install dependencies
-npm install
-
-# Run the development server
-npm run dev
-```
-
-### Running the MOQtail Room Server
+### Running the Time Travel Demo
 
 ```bash
-cd ./apps/room-server
+# Install local CA
+mkcert -install
+mkcert -key-file cert/key.pem -cert-file cert/cert.pem localhost 127.0.0.1 ::1
 
-# Install dependencies
-npm install
-
-# Run the development MOQtail Room Server
-npm run start
-# or
-npm run dev # for nodemon hot-reload
+# Run the Docker containers
+docker compose up --build
 ```
 
-The app will be available at [http://localhost:5173](http://localhost:5173) by default.
+**🚀 The app will be available at [http://localhost:4173](http://localhost:4173) by default.**
 
-## 🛠️ Sample Project Structure
-
-```
-apps/client/
-
-├── public
-│   ├── ...
-├── src
-│   ├── App.tsx
-│   ├── composables
-│   │   └── useVideoPipeline.ts
-│   ├── contexts
-│   │   └── SessionContext.tsx
-│   ├── index.css
-│   ├── main.tsx
-│   ├── pages
-│   │   ├── JoinPage.tsx
-│   │   └── SessionPage.tsx
-│   ├── sockets
-│   │   └── SocketContext.tsx
-│   ├── startup.ts
-│   ├── types
-│   │   ├── AppSettings.ts
-│   │   └── types.ts
-│   ├── videoUtils.ts
-│   ├── vite-env.d.ts
-│   └── workers
-│       ├── decoderWorker.ts
-│       └── pcmPlayerProcessor.js
-├── ...
-
-```
+> [!NOTE]
+> If you experience issues with TLS certificates, please check the [README](cert/README.md) in the `cert` directory for troubleshooting steps.
