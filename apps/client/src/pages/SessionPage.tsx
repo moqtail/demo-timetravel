@@ -1262,6 +1262,47 @@ function SessionPage() {
       handleStopHDEncoding()
     })
 
+    socket.on('hd-already-active', ({ targetUserId }) => {
+      console.log(`HD encoding already active for ${targetUserId} - subscribing to existing HD stream`)
+
+      manualQualityTransitionsRef.current.add(targetUserId)
+
+      setUserVideoQualities((prev) => {
+        const newQualities = {
+          ...prev,
+          [targetUserId]: 'HD' as VideoQuality,
+        }
+        userVideoQualitiesRef.current = newQualities
+        console.log(`Updated quality state to HD for ${targetUserId}:`, newQualities)
+        return newQualities
+      })
+
+      setTimeout(async () => {
+        try {
+          console.log(`Unsubscribing from SD video for ${targetUserId} before subscribing to existing HD`)
+          await unsubscribeFromUser(targetUserId, 'video')
+
+          await new Promise((resolve) => setTimeout(resolve, 500))
+
+          const currentUsers = usersRef.current
+          const currentCanvasRefs = remoteCanvasRefsRef.current
+
+          console.log(`Subscribing to existing HD video for ${targetUserId}`)
+          const success = await subscribeToHDVideoWithState(targetUserId, currentUsers, currentCanvasRefs)
+
+          if (success) {
+            console.log(`Successfully subscribed to existing HD video for ${targetUserId}`)
+          } else {
+            console.error(`Failed to subscribe to existing HD video for ${targetUserId}`)
+          }
+        } catch (error) {
+          console.error(`Error subscribing to existing HD for ${targetUserId}:`, error)
+        } finally {
+          manualQualityTransitionsRef.current.delete(targetUserId)
+        }
+      }, 100)
+    })
+
     socket.on('user-disconnect', (msg: UserDisconnectedMessage) => {
       console.info(`User disconnected: ${msg.userId}`)
       setUsers((prev) => {
@@ -1351,6 +1392,9 @@ function SessionPage() {
       socket.off('user-disconnect')
       socket.off('room-timeout')
       socket.off('screen-share-toggled')
+      socket.off('request-hd-video')
+      socket.off('request-sd-video')
+      socket.off('hd-already-active')
     }
   }, [contextSocket])
 
@@ -1684,11 +1728,9 @@ function SessionPage() {
     const tracksReady = announced > 0 && videoTrackAlias > 0 && audioTrackAlias > 0
     const wasIntentionallyUnsubscribed = currentSubscription?.intentionallyUnsubscribed === true
 
-    const userHasHD = users[userId]?.hasVideoHD === true
-    // Skip automatic subscription if user is undergoing manual quality transition
     const isInManualTransition = manualQualityTransitionsRef.current.has(userId)
     const shouldSubscribe =
-      tracksReady && isCompletelyUnsubscribed && !wasIntentionallyUnsubscribed && !userHasHD && !isInManualTransition
+      tracksReady && isCompletelyUnsubscribed && !wasIntentionallyUnsubscribed && !isInManualTransition
 
     if (shouldSubscribe) {
       console.log(`Starting subscription to ${userId} - video: ${videoTrackAlias}, audio: ${audioTrackAlias}`)
@@ -1696,11 +1738,7 @@ function SessionPage() {
         await subscribeToTrack(roomName, userId, videoTrackAlias, audioTrackAlias, chatTrackAlias, canvasRef)
       }, 500)
     } else {
-      if (tracksReady && userHasHD) {
-        console.log(
-          `Skipping auto-subscription to ${userId} - user has HD video active, letting HD toggle logic handle it`,
-        )
-      } else if (tracksReady && isInManualTransition) {
+      if (tracksReady && isInManualTransition) {
         console.log(`Skipping auto-subscription to ${userId} - user is undergoing manual quality transition`)
       } else if (tracksReady && wasIntentionallyUnsubscribed) {
         console.log(`Skipping auto-subscription to ${userId} - user was intentionally unsubscribed from both tracks`)
