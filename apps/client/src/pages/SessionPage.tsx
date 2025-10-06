@@ -2158,21 +2158,43 @@ function SessionPage() {
   return (
     <div className="h-screen bg-gray-900 flex flex-col overflow-hidden" style={{ height: '100dvh' }}>
       {/* Header */}
-      <div className="bg-gray-800 px-6 py-3 flex justify-between items-center border-b border-gray-700 flex-shrink-0">
-        <div className="flex items-center space-x-4">
-          <h1 className="text-white text-xl font-semibold">MOQtail Demo - Room: {roomState?.name}</h1>
-          <div className="flex items-center space-x-2 text-gray-300">
-            <Users className="w-4 h-4" />
-            <span className="text-sm">
-              {getUserCount()} participant{userCount > 1 ? 's' : ''}
+      <div className="bg-gray-800 px-4 py-2 flex flex-wrap md:flex-nowrap justify-between items-center border-b border-gray-700">
+        {/* Left: Room Title */}
+        <div className="flex items-center flex-1 min-w-0 space-x-2 md:space-x-4 overflow-hidden">
+          <h1 className="text-white text-sm md:text-xl font-semibold truncate">
+            <span className="hidden sm:inline">MOQtail Demo - Room: </span>
+            <span className="inline sm:hidden">MOQtail - Room: </span>
+            {roomState?.name}
+          </h1>
+        
+          {/* Participants */}
+          <div className="flex items-center space-x-1 text-gray-300 text-xs md:text-sm flex-shrink-0">
+            <Users className="w-3 h-3 md:w-4 md:h-4" />
+            <span className="truncate">
+              {getUserCount()}
+              <span className="hidden sm:inline"> participant{userCount > 1 ? 's' : ''}</span>
             </span>
           </div>
         </div>
-        <div className={`flex items-center space-x-2 ${timeRemainingColor}`}>
-          <span className="text-base font-semibold">⏱️ Remaining Time: {timeRemaining}</span>
+        
+        {/* Right: Timer + End Call */}
+        <div className={`flex items-center text-xs md:text-base font-semibold ml-2 md:ml-4 flex-shrink-0 ${timeRemainingColor}`}>
+          <span className="hidden md:inline">⏱️ Remaining Time: </span>
+          <span className="md:hidden">⏱️</span>
+          <span className="inline-block min-w-[3ch] text-right tabular-nums ml-1">
+            {timeRemaining}
+          </span>
+        
+          {/* End Call Button */}
+          <button
+            onClick={leaveRoom}
+            className="ml-2 md:ml-4 p-2 md:p-3 rounded-full bg-red-600 hover:bg-red-700 text-white transition-all duration-200 flex-shrink-0"
+          >
+            <PhoneOff className="w-4 h-4 md:w-5 md:h-5 rotate-135" />
+          </button>         
         </div>
       </div>
-
+      
       {/* Main Content */}
       <div className="flex-1 flex min-h-0">
         {/* Video Grid Area */}
@@ -2878,13 +2900,6 @@ function SessionPage() {
             </button>
           </>
         )}
-        {/* End Call Button */}
-        <button
-          onClick={leaveRoom}
-          className="p-3 rounded-full bg-red-600 hover:bg-red-700 text-white transition-all duration-200 ml-8"
-        >
-          <PhoneOff className="w-5 h-5 transform rotate-135" />
-        </button>
         {/* Chat Toggle Button (when chat is closed) */}
         {!isChatOpen && (
           <button
