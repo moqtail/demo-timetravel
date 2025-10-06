@@ -2166,7 +2166,7 @@ function SessionPage() {
             <span className="inline sm:hidden">MOQtail - Room: </span>
             {roomState?.name}
           </h1>
-        
+
           {/* Participants */}
           <div className="flex items-center space-x-1 text-gray-300 text-xs md:text-sm flex-shrink-0">
             <Users className="w-3 h-3 md:w-4 md:h-4" />
@@ -2176,25 +2176,25 @@ function SessionPage() {
             </span>
           </div>
         </div>
-        
+
         {/* Right: Timer + End Call */}
-        <div className={`flex items-center text-xs md:text-base font-semibold ml-2 md:ml-4 flex-shrink-0 ${timeRemainingColor}`}>
+        <div
+          className={`flex items-center text-xs md:text-base font-semibold ml-2 md:ml-4 flex-shrink-0 ${timeRemainingColor}`}
+        >
           <span className="hidden md:inline">⏱️ Remaining Time: </span>
           <span className="md:hidden">⏱️</span>
-          <span className="inline-block min-w-[3ch] text-right tabular-nums ml-1">
-            {timeRemaining}
-          </span>
-        
+          <span className="inline-block min-w-[3ch] text-right tabular-nums ml-1">{timeRemaining}</span>
+
           {/* End Call Button */}
           <button
             onClick={leaveRoom}
             className="ml-2 md:ml-4 p-2 md:p-3 rounded-full bg-red-600 hover:bg-red-700 text-white transition-all duration-200 flex-shrink-0"
           >
             <PhoneOff className="w-4 h-4 md:w-5 md:h-5 rotate-135" />
-          </button>         
+          </button>
         </div>
       </div>
-      
+
       {/* Main Content */}
       <div className="flex-1 flex min-h-0">
         {/* Video Grid Area */}
