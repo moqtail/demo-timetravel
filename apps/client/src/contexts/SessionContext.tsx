@@ -23,12 +23,14 @@ type SessionContextType = {
   roomState: RoomState | undefined
   sessionDurationMinutes: number
   rewindFetchGroupSize: number
+  mediaStreamTrackProcessorMissing: boolean
   setSession: (
     userId: string,
     username: string,
     roomState: RoomState,
     sessionDurationMinutes: number,
     rewindFetchGroupSize: number,
+    mediaStreamTrackProcessorMissing?: boolean,
   ) => void
   clearSession: () => void
 }
@@ -41,6 +43,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [roomState, setRoomState] = useState<RoomState | undefined>(undefined)
   const [sessionDurationMinutes, setSessionDurationMinutes] = useState(10) // default fallback
   const [rewindFetchGroupSize, setRewindFetchGroupSize] = useState(5) // default fallback
+  const [mediaStreamTrackProcessorMissing, setMediaStreamTrackProcessorMissing] = useState(false)
 
   function setSession(
     userId: string,
@@ -48,12 +51,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     roomState: RoomState,
     sessionDurationMinutes: number,
     rewindFetchGroupSize: number,
+    mediaStreamTrackProcessorMissing: boolean = false,
   ) {
     setUserId(userId)
     setUsername(username)
     setRoomState(roomState)
     setSessionDurationMinutes(sessionDurationMinutes)
     setRewindFetchGroupSize(rewindFetchGroupSize)
+    setMediaStreamTrackProcessorMissing(mediaStreamTrackProcessorMissing)
   }
 
   function clearSession() {
@@ -62,11 +67,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setRoomState(undefined)
     setSessionDurationMinutes(10)
     setRewindFetchGroupSize(5)
+    setMediaStreamTrackProcessorMissing(false)
   }
 
   return (
     <SessionContext.Provider
-      value={{ userId, username, roomState, sessionDurationMinutes, rewindFetchGroupSize, setSession, clearSession }}
+      value={{
+        userId,
+        username,
+        roomState,
+        sessionDurationMinutes,
+        rewindFetchGroupSize,
+        mediaStreamTrackProcessorMissing,
+        setSession,
+        clearSession,
+      }}
     >
       {children}
     </SessionContext.Provider>

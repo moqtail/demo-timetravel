@@ -89,7 +89,15 @@ function SessionPage() {
 
   // initialize the variables
   const [maximizedUserId, setMaximizedUserId] = useState<string | null>(null)
-  const { userId, username, roomState, sessionDurationMinutes, rewindFetchGroupSize, clearSession } = useSession()
+  const {
+    userId,
+    username,
+    roomState,
+    sessionDurationMinutes,
+    rewindFetchGroupSize,
+    mediaStreamTrackProcessorMissing,
+    clearSession,
+  } = useSession()
   const [isMicOn, setIsMicOn] = useState(false)
   const [isCamOn, setisCamOn] = useState(false)
   const [isScreenSharing, setIsScreenSharing] = useState(false)
@@ -2784,42 +2792,52 @@ function SessionPage() {
   return (
     <div className="h-screen bg-gray-900 flex flex-col overflow-hidden" style={{ height: '100dvh' }}>
       {/* Header */}
-      <div className="bg-gray-800 px-4 py-2 flex flex-wrap md:flex-nowrap justify-between items-center border-b border-gray-700">
-        {/* Left: Room Title */}
-        <div className="flex items-center flex-1 min-w-0 space-x-2 md:space-x-4 overflow-hidden">
-          <h1 className="text-white text-sm md:text-xl font-semibold truncate">
-            <span className="hidden sm:inline">MOQtail Demo - Room: </span>
-            <span className="inline sm:hidden">MOQtail - Room: </span>
-            {roomState?.name}
-          </h1>
-
-          {/* Participants */}
-          <div className="flex items-center space-x-1 text-gray-300 text-xs md:text-sm flex-shrink-0">
-            <Users className="w-3 h-3 md:w-4 md:h-4" />
-            <span className="truncate">
-              {getUserCount()}
-              <span className="hidden sm:inline"> participant{userCount > 1 ? 's' : ''}</span>
+      <div className="bg-gray-800 px-6 py-3 flex justify-between items-center border-b border-gray-700 flex-shrink-0">
+        <div className="flex items-center space-x-4">
+          <h1 className="text-white text-xl font-semibold">MOQtail Demo - Room: {roomState?.name}</h1>
+          <div className="flex items-center space-x-2 text-gray-300">
+            <Users className="w-4 h-4" />
+            <span className="text-sm">
+              {getUserCount()} participant{userCount > 1 ? 's' : ''}
             </span>
           </div>
         </div>
-
-        {/* Right: Timer + End Call */}
-        <div
-          className={`flex items-center text-xs md:text-base font-semibold ml-2 md:ml-4 flex-shrink-0 ${timeRemainingColor}`}
-        >
-          <span className="hidden md:inline">⏱️ Remaining Time: </span>
-          <span className="md:hidden">⏱️</span>
-          <span className="inline-block min-w-[3ch] text-right tabular-nums ml-1">{timeRemaining}</span>
-
-          {/* End Call Button */}
-          <button
-            onClick={leaveRoom}
-            className="ml-2 md:ml-4 p-2 md:p-3 rounded-full bg-red-600 hover:bg-red-700 text-white transition-all duration-200 flex-shrink-0"
-          >
-            <PhoneOff className="w-4 h-4 md:w-5 md:h-5 rotate-135" />
-          </button>
+        <div className={`flex items-center space-x-2 ${timeRemainingColor}`}>
+          <span className="text-base font-semibold">⏱️ Remaining Time: {timeRemaining}</span>
         </div>
       </div>
+
+      {/* MediaStreamTrackProcessor Warning */}
+      {mediaStreamTrackProcessorMissing && (
+        <div className="bg-yellow-900 border-l-4 border-yellow-500 px-6 py-3 flex items-center justify-between">
+          <div className="flex items-center space-x-3">
+            <div className="flex-shrink-0">
+              <svg className="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </div>
+            <div>
+              <p className="text-yellow-200 font-medium">Video Publishing Limited</p>
+              <p className="text-yellow-300 text-sm">
+                MediaStreamTrackProcessor is not available in your browser. Video publishing functionality will be
+                limited.
+              </p>
+            </div>
+          </div>
+          <a
+            href="https://github.com/moqtail/demo-timetravel/wiki"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-yellow-300 hover:text-yellow-100 underline text-sm font-medium"
+          >
+            Learn More
+          </a>
+        </div>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 flex min-h-0">
@@ -3557,6 +3575,13 @@ function SessionPage() {
             </button>
           </>
         )}
+        {/* End Call Button */}
+        <button
+          onClick={leaveRoom}
+          className="p-3 rounded-full bg-red-600 hover:bg-red-700 text-white transition-all duration-200 ml-8"
+        >
+          <PhoneOff className="w-5 h-5 transform rotate-135" />
+        </button>
         {/* Chat Toggle Button (when chat is closed) */}
         {!isChatOpen && (
           <button
