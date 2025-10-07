@@ -181,8 +181,27 @@ function SessionPage() {
   type VideoQuality = 'SD' | 'HD'
   const [userVideoQualities, setUserVideoQualities] = useState<{ [userId: string]: VideoQuality }>({})
   const userVideoQualitiesRef = useRef<{ [userId: string]: VideoQuality }>({})
+  const userSubscriptionsRef = useRef<{
+    [userId: string]: {
+      videoSubscribed: boolean
+      videoHDSubscribed?: boolean
+      audioSubscribed: boolean
+      screenshareSubscribed?: boolean
+      videoRequestId?: bigint
+      videoHDRequestId?: bigint
+      audioRequestId?: bigint
+      screenshareRequestId?: bigint
+      intentionallyUnsubscribed?: boolean
+    }
+  }>({})
   const hdSubscriptionAttemptsRef = useRef<Set<string>>(new Set())
   const manualQualityTransitionsRef = useRef<Set<string>>(new Set())
+
+  // HD Permission Dialog State
+  const [hdPermissionRequest, setHdPermissionRequest] = useState<{ requesterId: string; requesterName: string } | null>(
+    null,
+  )
+  const [pendingHDRequests, setPendingHDRequests] = useState<Set<string>>(new Set())
   useEffect(() => {
     userVideoQualitiesRef.current = userVideoQualities
   }, [userVideoQualities])
@@ -193,6 +212,10 @@ function SessionPage() {
   useEffect(() => {
     remoteCanvasRefsRef.current = remoteCanvasRefs
   }, [remoteCanvasRefs])
+
+  useEffect(() => {
+    userSubscriptionsRef.current = userSubscriptions
+  }, [userSubscriptions])
 
   const emojiCategories = {
     Faces: ['😀', '😂', '😍', '😊', '😉', '😎', '🤔', '😮', '😢', '😭', '😡', '🤯', '🙄', '😴'],
@@ -619,15 +642,16 @@ function SessionPage() {
     handleToggle('mic')
   }
 
-  const handleToggleRemoteUserQuality = async (targetUserId: string) => {
+  const handleQualityTransition = async (
+    targetUserId: string,
+    currentQuality: VideoQuality,
+    newQuality: VideoQuality,
+  ) => {
     if (isRewindCleaningUp.current) {
       return
     }
 
-    const currentQuality = userVideoQualities[targetUserId] || 'SD'
-    const newQuality: VideoQuality = currentQuality === 'SD' ? 'HD' : 'SD'
-
-    console.log(`Requesting ${newQuality} quality from remote user ${targetUserId}`)
+    console.log(`Transitioning ${targetUserId} from ${currentQuality} to ${newQuality}`)
     manualQualityTransitionsRef.current.add(targetUserId)
 
     try {
@@ -678,6 +702,56 @@ function SessionPage() {
 
       return newQualities
     })
+  }
+
+  const handleToggleRemoteUserQuality = async (targetUserId: string) => {
+    if (isRewindCleaningUp.current) {
+      return
+    }
+
+    const currentQuality = userVideoQualities[targetUserId] || 'SD'
+
+    if (currentQuality === 'HD') {
+      // HD to SD: Direct transition, no permission needed
+      console.log(`Switching from HD to SD for ${targetUserId}`)
+      await handleQualityTransition(targetUserId, 'HD', 'SD')
+    } else {
+      // SD to HD: Request permission first
+      console.log(`Requesting HD permission from ${targetUserId}`)
+
+      // Add to pending requests
+      setPendingHDRequests((prev) => new Set(prev).add(targetUserId))
+
+      contextSocket?.emit('request-hd-video', {
+        targetUserId,
+        requesterId: userId,
+      })
+      console.log(`Sent HD permission request to user ${targetUserId}`)
+      // Wait for permission response - handleQualityTransition will be called based on response
+    }
+  }
+
+  // HD Permission Response Functions
+  const handleHDPermissionAccept = () => {
+    if (hdPermissionRequest && contextSocket) {
+      console.log(`Accepting HD permission request from ${hdPermissionRequest.requesterId}`)
+      contextSocket.emit('hd-permission-response', {
+        requesterId: hdPermissionRequest.requesterId,
+        allowed: true,
+      })
+      setHdPermissionRequest(null)
+    }
+  }
+
+  const handleHDPermissionReject = () => {
+    if (hdPermissionRequest && contextSocket) {
+      console.log(`Rejecting HD permission request from ${hdPermissionRequest.requesterId}`)
+      contextSocket.emit('hd-permission-response', {
+        requesterId: hdPermissionRequest.requesterId,
+        allowed: false,
+      })
+      setHdPermissionRequest(null)
+    }
   }
 
   const handleStartHDEncoding = () => {
@@ -1251,9 +1325,63 @@ function SessionPage() {
       })
     })
 
-    // TODO: THE conditional accept should be added here
+    // Handle HD permission request from another user
+    socket.on('hd-permission-request', ({ requesterId }) => {
+      console.log(`User ${requesterId} is requesting HD video permission from me`)
+      const requester = usersRef.current[requesterId]
+      const requesterName = requester ? requester.name : 'Unknown User'
+      setHdPermissionRequest({ requesterId, requesterName })
+    })
+
+    // Handle permission denied response
+    socket.on('hd-permission-denied', ({ targetUserId }) => {
+      console.log(`HD permission denied by ${targetUserId}`)
+      // User stays in SD mode - no action needed since we didn't change quality yet
+
+      // Remove from pending requests
+      setPendingHDRequests((prev) => {
+        const newSet = new Set(prev)
+        newSet.delete(targetUserId)
+        return newSet
+      })
+    })
+
+    // Handle permission granted response
+    socket.on('hd-permission-granted', ({ targetUserId }) => {
+      console.log(`HD permission granted by ${targetUserId}`)
+
+      // Remove from pending requests
+      setPendingHDRequests((prev) => {
+        const newSet = new Set(prev)
+        newSet.delete(targetUserId)
+        return newSet
+      })
+
+      // First, set the quality to HD so the track-updated handler will auto-subscribe
+      setUserVideoQualities((prev) => {
+        const newQualities = {
+          ...prev,
+          [targetUserId]: 'HD' as VideoQuality,
+        }
+        userVideoQualitiesRef.current = newQualities
+        console.log(`Set quality to HD for ${targetUserId} - track-updated will handle the rest`)
+        return newQualities
+      })
+
+      // Unsubscribe from SD video after a short delay to ensure HD subscription starts
+      setTimeout(async () => {
+        try {
+          console.log(`Unsubscribing from SD video for ${targetUserId}`)
+          await unsubscribeFromUser(targetUserId, 'video')
+        } catch (error) {
+          console.error(`Error unsubscribing from SD for ${targetUserId}:`, error)
+        }
+      }, 200)
+    })
+
+    // Handle direct HD video request (when permission is granted)
     socket.on('request-hd-video', ({ requesterId }) => {
-      console.log(`User ${requesterId} requested HD video from me`)
+      console.log(`Starting HD encoding - permission was granted for ${requesterId}`)
       handleStartHDEncoding()
     })
 
@@ -1264,6 +1392,13 @@ function SessionPage() {
 
     socket.on('hd-already-active', ({ targetUserId }) => {
       console.log(`HD encoding already active for ${targetUserId} - subscribing to existing HD stream`)
+
+      // Remove from pending requests since we're getting direct access to HD
+      setPendingHDRequests((prev) => {
+        const newSet = new Set(prev)
+        newSet.delete(targetUserId)
+        return newSet
+      })
 
       manualQualityTransitionsRef.current.add(targetUserId)
 
@@ -1395,6 +1530,9 @@ function SessionPage() {
       socket.off('request-hd-video')
       socket.off('request-sd-video')
       socket.off('hd-already-active')
+      socket.off('hd-permission-request')
+      socket.off('hd-permission-denied')
+      socket.off('hd-permission-granted')
     }
   }, [contextSocket])
 
@@ -2267,12 +2405,13 @@ function SessionPage() {
   }
 
   const unsubscribeFromUser = async (targetUserId: string, type: 'video' | 'audio' | 'both') => {
-    if (!moqClient || targetUserId === userId) {
-      console.warn(`Cannot unsubscribe: moqClient=${!!moqClient}, targetUserId=${targetUserId}, userId=${userId}`)
+    const _client = moqClientRef.current
+    if (!_client || targetUserId === userId) {
+      console.warn(`Cannot unsubscribe: moqClient=${!!_client}, targetUserId=${targetUserId}, userId=${userId}`)
       return
     }
 
-    const subscription = userSubscriptions[targetUserId]
+    const subscription = userSubscriptionsRef.current[targetUserId]
 
     if (!subscription) {
       console.warn(`No subscription found for user ${targetUserId}`)
@@ -2289,7 +2428,7 @@ function SessionPage() {
     ) {
       try {
         console.log(`Attempting to unsubscribe from ${targetUserId} video with requestId:`, subscription.videoRequestId)
-        await moqClient.unsubscribe(subscription.videoRequestId)
+        await _client.unsubscribe(subscription.videoRequestId)
         console.log(`Successfully unsubscribed from ${targetUserId} video`)
         videoUnsubscribed = true
       } catch (error) {
@@ -2309,7 +2448,7 @@ function SessionPage() {
           `Attempting to unsubscribe from ${targetUserId} audio with requestId:`,
           subscription.audioRequestId!,
         )
-        await moqClient.unsubscribe(subscription.audioRequestId!)
+        await _client.unsubscribe(subscription.audioRequestId!)
         console.log(`Successfully unsubscribed from ${targetUserId} audio`)
         audioUnsubscribed = true
       } catch (error) {
@@ -2747,14 +2886,20 @@ function SessionPage() {
                       <button
                         onClick={() => handleToggleRemoteUserQuality(user.id)}
                         className={`px-2 py-1 rounded-md transition-all duration-200 text-xs font-semibold min-w-[2.5rem] shadow-lg ${
-                          (userVideoQualities[user.id] || 'SD') === 'HD'
-                            ? 'bg-lime-600 hover:bg-lime-700 text-white'
-                            : 'bg-orange-600 hover:bg-orange-700 text-white'
+                          pendingHDRequests.has(user.id)
+                            ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
+                            : (userVideoQualities[user.id] || 'SD') === 'HD'
+                              ? 'bg-lime-600 hover:bg-lime-700 text-white'
+                              : 'bg-orange-600 hover:bg-orange-700 text-white'
                         }`}
-                        disabled={isRewindCleaningUp.current}
-                        title={`Switch to ${(userVideoQualities[user.id] || 'SD') === 'SD' ? 'HD (1280x720)' : 'SD (640x360)'} quality`}
+                        disabled={isRewindCleaningUp.current || pendingHDRequests.has(user.id)}
+                        title={
+                          pendingHDRequests.has(user.id)
+                            ? 'Waiting for HD permission response...'
+                            : `Switch to ${(userVideoQualities[user.id] || 'SD') === 'SD' ? 'HD (1280x720)' : 'SD (640x360)'} quality`
+                        }
                       >
-                        {userVideoQualities[user.id] || 'SD'}
+                        {pendingHDRequests.has(user.id) ? '...' : userVideoQualities[user.id] || 'SD'}
                       </button>
                     </div>
                     {/* Show initials when remote video is off */}
@@ -3418,6 +3563,36 @@ function SessionPage() {
           userName={users[selectedRewindUserId]?.name || 'Unknown User'}
           userColor={getUserColorHex(selectedRewindUserId)}
         />
+      )}
+
+      {/* HD Permission Dialog */}
+      {hdPermissionRequest && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 rounded-lg p-6 max-w-md mx-4 border border-gray-600">
+            <div className="flex items-center mb-4">
+              <Eye className="w-6 h-6 text-blue-500 mr-3" />
+              <h3 className="text-white text-lg font-semibold">HD Video Permission Request</h3>
+            </div>
+            <p className="text-gray-300 mb-6">
+              <span className="font-medium text-white">{hdPermissionRequest.requesterName}</span> wants to view your
+              video in HD quality.
+            </p>
+            <div className="flex space-x-3">
+              <button
+                onClick={handleHDPermissionAccept}
+                className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+              >
+                Allow HD
+              </button>
+              <button
+                onClick={handleHDPermissionReject}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+              >
+                Keep SD
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

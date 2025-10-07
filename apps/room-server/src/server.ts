@@ -684,6 +684,7 @@ const rooms = new Map<string, RoomState>()
 const userRoomMapping = new Map<string, string>()
 const roomTimers = new Map<string, NodeJS.Timeout>()
 const hdViewers = new Map<string, Set<string>>()
+const hdPermissionRequests = new Map<string, Set<string>>() // targetUserId -> Set of requesterIds
 let roomCounter = 0
 let lastTrackAlias = 1
 
@@ -1021,16 +1022,18 @@ io.on('connection', (socket) => {
     const viewersSet = hdViewers.get(targetUserId)!
     const wasEmpty = viewersSet.size === 0
 
-    viewersSet.add(socket.id)
-
     console.debug(
-      `HD video request: ${socket.id} wants to watch ${targetUserId} in HD. Total HD viewers: ${viewersSet.size}`,
+      `HD video request: ${socket.id} wants to watch ${targetUserId} in HD. Total potential viewers: ${viewersSet.size}`,
     )
 
     if (wasEmpty) {
-      io.to(targetUserId).emit('request-hd-video', { requesterId: socket.id })
-      console.debug(`First HD viewer for ${targetUserId} - starting HD encoding`)
+      if (!hdPermissionRequests.has(targetUserId)) {
+        hdPermissionRequests.set(targetUserId, new Set())
+      }
+      hdPermissionRequests.get(targetUserId)!.add(socket.id)
+      io.to(targetUserId).emit('hd-permission-request', { requesterId: socket.id })
     } else {
+      viewersSet.add(socket.id)
       console.debug(`Additional HD viewer for ${targetUserId} - HD encoding already active`)
       io.to(socket.id).emit('hd-already-active', { targetUserId })
     }
@@ -1068,6 +1071,41 @@ io.on('connection', (socket) => {
     }
   })
 
+  socket.on('hd-permission-response', ({ requesterId, allowed }) => {
+    const targetUserId = socket.id
+    const roomName = userRoomMapping.get(targetUserId)
+
+    if (!roomName) {
+      console.warn(`Room not found for user ${targetUserId}`)
+      return
+    }
+
+    console.debug(
+      `HD permission response from ${targetUserId}: ${allowed ? 'ALLOWED' : 'DENIED'} for requester ${requesterId}`,
+    )
+
+    const pendingRequests = hdPermissionRequests.get(targetUserId)
+    if (pendingRequests) {
+      pendingRequests.delete(requesterId)
+      if (pendingRequests.size === 0) {
+        hdPermissionRequests.delete(targetUserId)
+      }
+    }
+
+    if (allowed) {
+      if (!hdViewers.has(targetUserId)) {
+        hdViewers.set(targetUserId, new Set())
+      }
+      hdViewers.get(targetUserId)!.add(requesterId)
+      io.to(targetUserId).emit('request-hd-video', { requesterId })
+      io.to(requesterId).emit('hd-permission-granted', { targetUserId })
+      console.debug(`HD permission granted - starting HD encoding for ${targetUserId}, notifying ${requesterId}`)
+    } else {
+      io.to(requesterId).emit('hd-permission-denied', { targetUserId })
+      console.debug(`HD permission denied for ${requesterId} by ${targetUserId}`)
+    }
+  })
+
   socket.on('disconnect', (reason: DisconnectReason, description?: any) => {
     console.debug('disconnect', reason, socket.id)
 
@@ -1095,6 +1133,20 @@ io.on('connection', (socket) => {
           hdViewers.delete(targetUserId)
         }
       }
+    }
+
+    for (const [targetUserId, requestersSet] of hdPermissionRequests.entries()) {
+      if (requestersSet.has(socket.id)) {
+        requestersSet.delete(socket.id)
+        console.debug(`Removed ${socket.id} from HD permission requests for ${targetUserId}`)
+        if (requestersSet.size === 0) {
+          hdPermissionRequests.delete(targetUserId)
+        }
+      }
+    }
+    if (hdPermissionRequests.has(socket.id)) {
+      hdPermissionRequests.delete(socket.id)
+      console.debug(`Removed pending HD permission requests for disconnected user ${socket.id}`)
     }
 
     // remove from user room mapping
