@@ -20,10 +20,12 @@ export interface AppSettings {
   wsPath: string
   posthog_host: string
   posthog_code: string
-  videoEncoderConfig: VideoEncoderConfig
   audioEncoderConfig: AudioEncoderConfig
-  videoDecoderConfig: VideoDecoderConfig
   audioDecoderConfig: AudioDecoderConfig
+  videoEncoderConfigHD: VideoEncoderConfig
+  videoDecoderConfigHD: VideoDecoderConfig
+  videoEncoderConfig: VideoEncoderConfig
+  videoDecoderConfig: VideoDecoderConfig
   screenshareEncoderConfig: VideoEncoderConfig
   screenshareDecoderConfig: VideoDecoderConfig
   keyFrameInterval: 'auto' | number

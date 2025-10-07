@@ -107,6 +107,25 @@ self.onmessage = async (e) => {
     return
   }
 
+  if (type === 'updateDecoderConfig') {
+    console.log('[DECODER] Updating decoder config')
+    theDecoderConfig = decoderConfig || null
+
+    // Close the current decoder
+    // Force to wait for keyframe (necessary to avoid decode errors)
+    if (videoDecoder) {
+      try {
+        videoDecoder.close()
+        videoDecoder = null
+        waitingForKeyframe = true
+        console.log('[DECODER] Video decoder closed for new config, will recreate on next keyframe')
+      } catch (e) {
+        console.error('[DECODER] Error closing video decoder for config update:', e)
+      }
+    }
+    return
+  }
+
   if (type === 'moq') {
     const moqtObj = payload
     const extensionHeaders = extensions

@@ -42,11 +42,12 @@ export interface RoomUser {
   publishedTracks: { [K in TrackType]: Track }
   subscribedTracks: number[]
   hasVideo: boolean
+  hasVideoHD: boolean
   hasAudio: boolean
   hasScreenshare: boolean
 }
 
-export type TrackType = 'video' | 'audio' | 'chat' | 'screenshare'
+export type TrackType = 'video' | 'video-hd' | 'audio' | 'chat' | 'screenshare'
 
 export interface Track {
   kind: TrackType
@@ -86,13 +87,13 @@ export interface RoomTimeoutMessage {
 }
 
 export interface ToggleRequest {
-  kind: 'cam' | 'mic' | 'screenshare'
+  kind: 'cam' | 'cam-hd' | 'mic' | 'screenshare'
   value: boolean
 }
 
 export interface ToggleResponse {
   userId: string
-  kind: 'cam' | 'mic' | 'screenshare'
+  kind: 'cam' | 'cam-hd' | 'mic' | 'screenshare'
   value: boolean
 }
 

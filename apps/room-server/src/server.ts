@@ -683,6 +683,8 @@ function handleAdminPage(req: any, res: any) {
 const rooms = new Map<string, RoomState>()
 const userRoomMapping = new Map<string, string>()
 const roomTimers = new Map<string, NodeJS.Timeout>()
+const hdViewers = new Map<string, Set<string>>()
+const hdPermissionRequests = new Map<string, Set<string>>() // targetUserId -> Set of requesterIds
 let roomCounter = 0
 let lastTrackAlias = 1
 
@@ -715,12 +717,14 @@ function newUser(userId: string, username: string) {
     publishedTracks: new Map(),
     subscribedTracks: [],
     hasVideo: false,
+    hasVideoHD: false,
     hasAudio: false,
     hasScreenshare: false,
   }
 
   // initialize tracks
   user.publishedTracks.set('video', { kind: 'video', alias: lastTrackAlias++, announced: 0, published: 0 })
+  user.publishedTracks.set('video-hd', { kind: 'video-hd', alias: lastTrackAlias++, announced: 0, published: 0 })
   user.publishedTracks.set('audio', { kind: 'audio', alias: lastTrackAlias++, announced: 0, published: 0 })
   user.publishedTracks.set('chat', { kind: 'chat', alias: lastTrackAlias++, announced: 0, published: 0 })
   user.publishedTracks.set('screenshare', { kind: 'screenshare', alias: lastTrackAlias++, announced: 0, published: 0 })
@@ -742,11 +746,13 @@ function toRoomUserView(user: RoomUser): RoomUserView {
     name: user.name,
     joined: user.joined,
     hasVideo: user.hasVideo,
+    hasVideoHD: user.hasVideoHD,
     hasAudio: user.hasAudio,
     hasScreenshare: user.hasScreenshare,
     // You may need to adjust the following lines based on the RoomUserView definition
     publishedTracks: {
       video: user.publishedTracks.get('video')!,
+      'video-hd': user.publishedTracks.get('video-hd')!,
       audio: user.publishedTracks.get('audio')!,
       chat: user.publishedTracks.get('chat')!,
       screenshare: user.publishedTracks.get('screenshare')!,
@@ -981,6 +987,8 @@ io.on('connection', (socket) => {
 
     if (request.kind === 'cam') {
       user.hasVideo = request.value
+    } else if (request.kind === 'cam-hd') {
+      user.hasVideoHD = request.value
     } else if (request.kind === 'mic') {
       user.hasAudio = request.value
     } else if (request.kind === 'screenshare') {
@@ -998,6 +1006,106 @@ io.on('connection', (socket) => {
     socket.broadcast.to(roomName).emit('button-toggled', toggled)
   })
 
+  socket.on('request-hd-video', ({ targetUserId, requesterId }) => {
+    const roomName = userRoomMapping.get(socket.id)
+
+    if (!roomName) {
+      const errorText = `Room (${roomName}) not found in userRoomMapping.`
+      console.warn(errorText, socket.id)
+      return
+    }
+
+    if (!hdViewers.has(targetUserId)) {
+      hdViewers.set(targetUserId, new Set())
+    }
+
+    const viewersSet = hdViewers.get(targetUserId)!
+    const wasEmpty = viewersSet.size === 0
+
+    console.debug(
+      `HD video request: ${socket.id} wants to watch ${targetUserId} in HD. Total potential viewers: ${viewersSet.size}`,
+    )
+
+    if (wasEmpty) {
+      if (!hdPermissionRequests.has(targetUserId)) {
+        hdPermissionRequests.set(targetUserId, new Set())
+      }
+      hdPermissionRequests.get(targetUserId)!.add(socket.id)
+      io.to(targetUserId).emit('hd-permission-request', { requesterId: socket.id })
+    } else {
+      viewersSet.add(socket.id)
+      console.debug(`Additional HD viewer for ${targetUserId} - HD encoding already active`)
+      io.to(socket.id).emit('hd-already-active', { targetUserId })
+    }
+  })
+
+  socket.on('request-sd-video', ({ targetUserId, requesterId }) => {
+    console.debug('request-sd-video', { targetUserId, requesterId }, socket.id)
+    const roomName = userRoomMapping.get(socket.id)
+
+    if (!roomName) {
+      const errorText = `Room (${roomName}) not found in userRoomMapping.`
+      console.warn(errorText, socket.id)
+      return
+    }
+
+    // Remove this viewer from HD viewers set
+    const viewersSet = hdViewers.get(targetUserId)
+    if (viewersSet) {
+      viewersSet.delete(socket.id)
+
+      console.debug(
+        `SD video request: ${socket.id} no longer watching ${targetUserId} in HD. Remaining HD viewers: ${viewersSet.size}`,
+      )
+
+      // Only send stop-hd-encoding if this was the last HD viewer
+      if (viewersSet.size === 0) {
+        io.to(targetUserId).emit('request-sd-video', { requesterId: socket.id })
+        console.debug(`Last HD viewer for ${targetUserId} left - stopping HD encoding`)
+        hdViewers.delete(targetUserId) // Clean up empty set
+      } else {
+        console.debug(`Other users still watching ${targetUserId} in HD - keeping HD encoding active`)
+      }
+    } else {
+      console.debug(`No HD viewers tracking found for ${targetUserId}`)
+    }
+  })
+
+  socket.on('hd-permission-response', ({ requesterId, allowed }) => {
+    const targetUserId = socket.id
+    const roomName = userRoomMapping.get(targetUserId)
+
+    if (!roomName) {
+      console.warn(`Room not found for user ${targetUserId}`)
+      return
+    }
+
+    console.debug(
+      `HD permission response from ${targetUserId}: ${allowed ? 'ALLOWED' : 'DENIED'} for requester ${requesterId}`,
+    )
+
+    const pendingRequests = hdPermissionRequests.get(targetUserId)
+    if (pendingRequests) {
+      pendingRequests.delete(requesterId)
+      if (pendingRequests.size === 0) {
+        hdPermissionRequests.delete(targetUserId)
+      }
+    }
+
+    if (allowed) {
+      if (!hdViewers.has(targetUserId)) {
+        hdViewers.set(targetUserId, new Set())
+      }
+      hdViewers.get(targetUserId)!.add(requesterId)
+      io.to(targetUserId).emit('request-hd-video', { requesterId })
+      io.to(requesterId).emit('hd-permission-granted', { targetUserId })
+      console.debug(`HD permission granted - starting HD encoding for ${targetUserId}, notifying ${requesterId}`)
+    } else {
+      io.to(requesterId).emit('hd-permission-denied', { targetUserId })
+      console.debug(`HD permission denied for ${requesterId} by ${targetUserId}`)
+    }
+  })
+
   socket.on('disconnect', (reason: DisconnectReason, description?: any) => {
     console.debug('disconnect', reason, socket.id)
 
@@ -1008,6 +1116,37 @@ io.on('connection', (socket) => {
       console.warn(errorText, socket.id)
       socket.emit('error', newError('update-track', ErrorCode.RoomNotFound, errorText))
       return
+    }
+
+    // Clean up HD viewers tracking when user disconnects
+    for (const [targetUserId, viewersSet] of hdViewers.entries()) {
+      if (viewersSet.has(socket.id)) {
+        viewersSet.delete(socket.id)
+        console.debug(
+          `Removed disconnected user ${socket.id} from HD viewers of ${targetUserId}. Remaining: ${viewersSet.size}`,
+        )
+
+        // If this was the last HD viewer, stop HD encoding
+        if (viewersSet.size === 0) {
+          io.to(targetUserId).emit('request-sd-video', { requesterId: socket.id })
+          console.debug(`Last HD viewer for ${targetUserId} disconnected - stopping HD encoding`)
+          hdViewers.delete(targetUserId)
+        }
+      }
+    }
+
+    for (const [targetUserId, requestersSet] of hdPermissionRequests.entries()) {
+      if (requestersSet.has(socket.id)) {
+        requestersSet.delete(socket.id)
+        console.debug(`Removed ${socket.id} from HD permission requests for ${targetUserId}`)
+        if (requestersSet.size === 0) {
+          hdPermissionRequests.delete(targetUserId)
+        }
+      }
+    }
+    if (hdPermissionRequests.has(socket.id)) {
+      hdPermissionRequests.delete(socket.id)
+      console.debug(`Removed pending HD permission requests for disconnected user ${socket.id}`)
     }
 
     // remove from user room mapping
