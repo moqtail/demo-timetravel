@@ -660,7 +660,7 @@ export function initializeVideoHDEncoder({
   let videoEncoder: VideoEncoder | null = null
   let encoderActive = true
   let videoGroupId = 0
-  let videoObjectId = 0n
+  let videoObjectId = 1n
   let isFirstKeyframeSent = false
   let videoConfig: ArrayBuffer | null = null
   let frameCounter = 0
@@ -669,7 +669,7 @@ export function initializeVideoHDEncoder({
 
   const createVideoEncoder = () => {
     isFirstKeyframeSent = false
-    videoObjectId = 0n
+    videoObjectId = 1n
     frameCounter = 0
     pendingVideoTimestamps.length = 0
 
@@ -835,7 +835,7 @@ export function initializeScreenshareEncoder({
   let videoEncoder: VideoEncoder | null = null
   let encoderActive = true
   let videoGroupId = 0
-  let videoObjectId = 0n
+  let videoObjectId = 1n
   let isFirstKeyframeSent = false
   let videoConfig: ArrayBuffer | null = null
   let frameCounter = 0
