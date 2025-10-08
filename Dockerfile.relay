@@ -1,0 +1,31 @@
+FROM rust:alpine AS relay-builder
+
+# Install system dependencies
+RUN apk --no-cache add git musl-dev
+
+# Clone the relay (draft 11)
+WORKDIR /moqtail
+RUN git init . && \
+    git remote add origin https://github.com/streaming-university/moqtail.git && \
+    git fetch --depth 1 origin fd691b4387c91b72acc4d264d4da092af49b7b0d && \
+    git checkout fd691b4387c91b72acc4d264d4da092af49b7b0d
+
+# Build the relay
+RUN cargo install --path apps/relay
+
+FROM alpine:latest
+
+# Install required dependencies
+RUN apk --no-cache add ca-certificates
+
+# Create directory for relay certificates
+RUN mkdir -p /etc/relay/cert
+
+# Copy the relay binary from the builder stage
+COPY --from=relay-builder /usr/local/cargo/bin/relay /usr/local/bin/relay
+
+# Expose the relay port
+EXPOSE 4433
+
+# Start the relay
+CMD ["relay", "--host", "0.0.0.0", "--cert-file", "/etc/relay/cert/cert.pem", "--key-file", "/etc/relay/cert/key.pem"]

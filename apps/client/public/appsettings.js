@@ -1,0 +1,78 @@
+window.appSettings = {
+  relayUrl: 'https://localhost:4433',
+  wsUrl: 'http://localhost:3001',
+  wsPath: '/ws',
+  posthog_host: 'https://eu.i.posthog.com',
+  posthog_code: '***',
+  videoEncoderConfigHD: {
+    codec: 'avc1.42E01F',
+    width: 1280,
+    height: 720,
+    bitrate: 1_200_000,
+    framerate: 30,
+    latencyMode: 'realtime',
+    hardwareAcceleration: 'prefer-software',
+  },
+  videoDecoderConfigHD: {
+    codec: 'avc1.42E01F',
+    optimizeForLatency: true,
+    hardwareAcceleration: 'prefer-software',
+  },
+  videoEncoderConfig: {
+    codec: 'avc1.42E01F',
+    width: 640,
+    height: 360,
+    bitrate: 300_000,
+    framerate: 25,
+    latencyMode: 'realtime',
+    hardwareAcceleration: 'prefer-software',
+  },
+  videoDecoderConfig: {
+    codec: 'avc1.42E01F',
+    optimizeForLatency: true,
+    hardwareAcceleration: 'prefer-software',
+  },
+  audioEncoderConfig: {
+    codec: 'opus',
+    sampleRate: 48000,
+    numberOfChannels: 1,
+    bitrate: 48_000,
+  },
+  audioDecoderConfig: {
+    codec: 'opus',
+    sampleRate: 48000,
+    numberOfChannels: 1,
+    bitrate: 48_000,
+  },
+  screenshareEncoderConfig: {
+    codec: 'avc1.64001F',
+    width: 1280,
+    height: 720,
+    bitrate: 1_000_000,
+    framerate: 30,
+    latencyMode: 'realtime',
+    hardwareAcceleration: 'prefer-software',
+  },
+  screenshareDecoderConfig: {
+    codec: 'avc1.64001F',
+    optimizeForLatency: true,
+    hardwareAcceleration: 'prefer-software',
+  },
+  keyFrameInterval: 50,
+  clockNormalizationConfig: {
+    timeServerUrl: 'https://time.akamai.com/?ms',
+    numberOfSamples: 5,
+  },
+  playoutBufferConfig: {
+    targetLatencyMs: 100,
+    maxLatencyMs: 1000,
+  },
+  canvasResolutionConfig: {
+    screenshare: {
+      defaultWidth: 1280,
+      defaultHeight: 720,
+      maxWidth: 2560,
+      maxHeight: 1440,
+    },
+  },
+}

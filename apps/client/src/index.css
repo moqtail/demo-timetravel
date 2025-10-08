@@ -1,0 +1,33 @@
+@import url('https://fonts.googleapis.com/css2?family=Source+Sans+3:ital,wght@0,200..900;1,200..900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Prevent horizontal scroll */
+html,
+body {
+  overflow-x: hidden;
+  margin: 0;
+  padding: 0;
+  background: #f7f9fc;
+  font-family: 'Source Sans 3', sans-serif;
+}
+
+/* Ensure content doesn’t extend beyond the viewport */
+* {
+  box-sizing: border-box;
+}
+
+/* Remove default margins/paddings that might cause scroll */
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* Prevent accidental height overflows */
+html,
+body {
+  max-width: 100vw;
+  max-height: 100dvh;
+}

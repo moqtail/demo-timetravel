@@ -1,0 +1,66 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches:
+      - main
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  editorconfig:
+    name: EditorConfig Check
+    if: github.event.action == 'opened' || github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Problem Matchers
+        run: echo "::add-matcher::${{ github.workspace }}/.github/matchers.json"
+
+      - name: Install EditorConfig CLI
+        uses: editorconfig-checker/action-editorconfig-checker@main
+
+      - name: Run EditorConfig Check
+        run: editorconfig-checker -format gcc
+
+  license:
+    name: License Check
+    if: github.event.action == 'opened' || github.event.action == 'synchronize'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Get all relevant changed files
+        id: changed-files
+        uses: tj-actions/changed-files@24d32ffd492484c1d75e0c0b894501ddb9d30d62 # v47
+        with:
+          files: |
+            **.ts
+            **.tsx
+
+      - name: Set up Go
+        if: steps.changed-files.outputs.any_changed == 'true'
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Install addlicense
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: go install github.com/google/addlicense@latest
+
+      - name: Check Licenses
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: |
+          addlicense -check \
+            -ignore "*" -ignore "**/vite*" -ignore "**/tsup*" \
+            -v -c "The MOQtail Authors" \
+            ${{ steps.changed-files.outputs.all_changed_files }}
