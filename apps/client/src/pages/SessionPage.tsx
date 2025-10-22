@@ -2920,28 +2920,6 @@ function SessionPage() {
                       data-videoquality={userVideoQualities[user.id] || 'SD'}
                       className="w-full h-full object-cover"
                     />
-
-                    {/* Video Quality Toggle Button for Remote User */}
-                    <div className="absolute top-3 left-3">
-                      <button
-                        onClick={() => handleToggleRemoteUserQuality(user.id)}
-                        className={`px-2 py-1 rounded-md transition-all duration-200 text-xs font-semibold min-w-[2.5rem] shadow-lg ${
-                          pendingHDRequests.has(user.id)
-                            ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
-                            : (userVideoQualities[user.id] || 'SD') === 'HD'
-                              ? 'bg-lime-600 hover:bg-lime-700 text-white'
-                              : 'bg-orange-600 hover:bg-orange-700 text-white'
-                        }`}
-                        disabled={isRewindCleaningUp.current || pendingHDRequests.has(user.id)}
-                        title={
-                          pendingHDRequests.has(user.id)
-                            ? 'Waiting for HD permission response...'
-                            : `Switch to ${(userVideoQualities[user.id] || 'SD') === 'SD' ? 'HD (720p)' : 'SD (360p)'} quality`
-                        }
-                      >
-                        {pendingHDRequests.has(user.id) ? '...' : userVideoQualities[user.id] || 'SD'}
-                      </button>
-                    </div>
                     {/* Show initials when remote video is off */}
                     {!user.hasVideo && (
                       <div className="absolute inset-0 flex items-center justify-center bg-gray-700">
@@ -3008,6 +2986,27 @@ function SessionPage() {
                 )}
                 {/* Info card toggle buttons */}
                 <div className="absolute top-3 right-3 flex space-x-1">
+                  {/* Video Quality Toggle Button for Remote User - moved here as the left-most control */}
+                  {!isSelf(user.id) && !(user as any).originalUserId && user.hasVideo && (
+                    <button
+                      onClick={() => handleToggleRemoteUserQuality(user.id)}
+                      className={`px-2 py-1 rounded-md transition-all duration-200 text-xs font-semibold min-w-[2.5rem] shadow-lg ${
+                        pendingHDRequests.has(user.id)
+                          ? 'bg-gray-500 text-gray-300 cursor-not-allowed'
+                          : (userVideoQualities[user.id] || 'SD') === 'HD'
+                            ? 'bg-lime-600 hover:bg-lime-700 text-white'
+                            : 'bg-orange-600 hover:bg-orange-700 text-white'
+                      }`}
+                      disabled={isRewindCleaningUp.current || pendingHDRequests.has(user.id)}
+                      title={
+                        pendingHDRequests.has(user.id)
+                          ? 'Waiting for HD permission response...'
+                          : `Switch to ${(userVideoQualities[user.id] || 'SD') === 'SD' ? 'HD (720p)' : 'SD (360p)'} quality`
+                      }
+                    >
+                      {pendingHDRequests.has(user.id) ? '...' : userVideoQualities[user.id] || 'SD'}
+                    </button>
+                  )}
                   {/* Subscription Controls - Only for remote users and not screenshare virtual users */}
                   {!isSelf(user.id) && !(user as any).originalUserId && (
                     <>
