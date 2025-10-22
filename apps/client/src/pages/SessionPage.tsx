@@ -49,15 +49,7 @@ import {
   RoomTimeoutMessage,
 } from '@/types/types'
 import { useSocket } from '@/sockets/SocketContext'
-import {
-  FullTrackName,
-  ObjectForwardingPreference,
-  Tuple,
-  GroupOrder,
-  FetchType,
-  Location,
-  FetchError,
-} from 'moqtail-ts/model'
+import { FullTrackName, ObjectForwardingPreference, Tuple, GroupOrder, FetchType, FetchError } from 'moqtail-ts/model'
 import {
   announceNamespaces,
   initializeChatMessageSender,
@@ -76,6 +68,7 @@ import {
   resizeCanvasWorker,
   resizeCanvasForMaximization,
   clearScreenshareCanvas,
+  subscribeOnlyVideo,
 } from '@/composables/useVideoPipeline'
 import { MOQtailClient } from 'moqtail-ts/client'
 import { NetworkTelemetry, ClockNormalizer } from 'moqtail-ts/util'
@@ -185,6 +178,10 @@ function SessionPage() {
   }>({})
   const [isFetching, setIsFetching] = useState(false)
   const isRewindCleaningUp = useRef<boolean>(false)
+  // temporary SD subscriptions created for rewind (keyed by userId)
+  const tempSDSubscriptionsRef = useRef<{
+    [userId: string]: { requestId: bigint; cleanup: () => Promise<void> }
+  }>({})
 
   type VideoQuality = 'SD' | 'HD'
   const [userVideoQualities, setUserVideoQualities] = useState<{ [userId: string]: VideoQuality }>({})
@@ -364,9 +361,50 @@ function SessionPage() {
         },
       })
       */
-      // get request id from the video track subscription
+      // get request id from the video track subscription. If the viewer is HD-subscribed
+      // and no SD request id exists, create a temporary SD subscription (no canvas/worker)
       console.log('userSubscriptions', userSubscriptions)
-      const videoRequestId = userSubscriptions[userId]?.videoRequestId
+      let videoRequestId = userSubscriptions[userId]?.videoRequestId
+
+      const isHDSubscribed = !!userSubscriptions[userId]?.videoHDSubscribed
+
+      if (videoRequestId === undefined && isHDSubscribed) {
+        console.log('No SD request id while HD subscribed - creating temporary SD subscription for rewind')
+        // create a silent SD subscription using subscribeOnlyVideo
+        const canvasRef = remoteCanvasRefs[userId]
+        if (!roomState) {
+          console.error('Room state missing, cannot create SD subscription')
+          return
+        }
+        const roomName = roomState.name
+        const videoFullTrackName = getTrackname(roomName, userId, 'video')
+        const videoTrackAlias = canvasRef?.current ? parseInt(canvasRef.current.dataset.videotrackalias || '-1') : -1
+
+        if (videoTrackAlias === -1) {
+          console.error('Cannot create temp SD subscription - track alias not available for user', userId)
+          return
+        }
+
+        const setup = subscribeOnlyVideo(moqClientRef.current!, videoTrackAlias, videoFullTrackName)
+        const result = await setup()
+        if (result.videoRequestId) {
+          tempSDSubscriptionsRef.current[userId] = { requestId: result.videoRequestId, cleanup: result.cleanup }
+          videoRequestId = result.videoRequestId
+          // Update local subscription state so other parts of app can see the requestId
+          setUserSubscriptions((prev) => ({
+            ...prev,
+            [userId]: {
+              ...prev[userId],
+              videoSubscribed: true,
+              videoRequestId: result.videoRequestId,
+            },
+          }))
+        } else {
+          console.error('Temporary SD subscription did not return a request id')
+          return
+        }
+      }
+
       if (videoRequestId === undefined) {
         console.error('No video request id found for user:', userId)
         return
@@ -457,6 +495,26 @@ function SessionPage() {
 
     setIsRewindPlayerOpen(false)
     setSelectedRewindUserId('')
+
+    // If we created a temporary SD subscription for this user, clean it up now
+    const tempSub = tempSDSubscriptionsRef.current[selectedRewindUserId]
+    if (tempSub) {
+      console.log('Cleaning up temporary SD subscription for', selectedRewindUserId)
+      tempSub.cleanup()
+      delete tempSDSubscriptionsRef.current[selectedRewindUserId]
+      // Clear subscription state if it was only temporary
+      setUserSubscriptions((prev) => {
+        const current = prev[selectedRewindUserId] || {}
+        return {
+          ...prev,
+          [selectedRewindUserId]: {
+            ...current,
+            videoSubscribed: false,
+            videoRequestId: undefined,
+          },
+        }
+      })
+    }
 
     // Add a delay to ensure rewind player cleanup is complete
     setTimeout(() => {

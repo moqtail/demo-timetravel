@@ -1405,6 +1405,49 @@ function subscribeAndPipeToWorker(
   })
 }
 
+export function subscribeOnlyVideo(
+  moqClient: MOQtailClient,
+  videoTrackAlias: number,
+  videoFullTrackName: FullTrackName,
+) {
+  const setup = async (): Promise<{ videoRequestId?: bigint; cleanup: () => Promise<void> }> => {
+    try {
+      const response = await moqClient.subscribe({
+        fullTrackName: videoFullTrackName,
+        groupOrder: GroupOrder.Original,
+        filterType: FilterType.LatestObject,
+        forward: true,
+        priority: 0,
+        trackAlias: videoTrackAlias,
+      })
+
+      if (response instanceof SubscribeError) {
+        console.error('subscribeOnlyVideo: subscribe returned error', response)
+        return { cleanup: async () => {} }
+      }
+
+      const { requestId } = response
+      console.log('subscribeOnlyVideo: subscribed, requestId=', requestId)
+
+      return {
+        videoRequestId: requestId,
+        cleanup: async () => {
+          try {
+            await moqClient.unsubscribe(requestId)
+            console.log('subscribeOnlyVideo: unsubscribed requestId=', requestId)
+          } catch (err) {
+            console.warn('subscribeOnlyVideo: failed to unsubscribe', err)
+          }
+        },
+      }
+    } catch (err) {
+      console.error('subscribeOnlyVideo: unexpected error', err)
+      return { cleanup: async () => {} }
+    }
+  }
+  return setup
+}
+
 function handleWorkerMessages(
   worker: Worker,
   audioNode: AudioWorkletNode,
