@@ -585,31 +585,8 @@ function SessionPage() {
     return user?.id || ''
   }
 
-  // Request notification permission on component mount
-  const requestNotificationPermission = async () => {
-    if ('Notification' in window && Notification.permission === 'default') {
-      try {
-        await Notification.requestPermission()
-      } catch (error) {
-        console.warn('Failed to request notification permission:', error)
-      }
-    }
-  }
-
-  // Show notification when tab is not visible
   const showRoomClosedNotification = (message: string) => {
-    if ('Notification' in window && Notification.permission === 'granted') {
-      const notification = new Notification('MOQtail Room Closed', {
-        body: message,
-        icon: '/moqtail.ico',
-        requireInteraction: true, // Keep notification visible until user interacts
-      })
-
-      notification.onclick = () => {
-        window.focus()
-        notification.close()
-      }
-    }
+    alert(`MOQtail Room Closed: ${message}`)
   }
 
   // Check if document is visible
@@ -1821,9 +1798,6 @@ function SessionPage() {
 
   // Request notification permission and handle page visibility changes
   useEffect(() => {
-    // Request notification permission on mount
-    requestNotificationPermission()
-
     // Handle page visibility changes to show pending room closed messages
     const handleVisibilityChange = () => {
       if (!document.hidden && pendingRoomClosedMessage) {
