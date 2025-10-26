@@ -228,3 +228,6 @@ dist
 # Ignore certificate files
 cert.pem
 key.pem
+
+# Ignore backup files
+*.backup

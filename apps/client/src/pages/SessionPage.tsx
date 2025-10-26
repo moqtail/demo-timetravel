@@ -1877,6 +1877,15 @@ function SessionPage() {
     return Object.entries(users).length
   }
 
+  function getGridDimensions(userCount: number) {
+  if (userCount === 0) return { rows: 0, columns: 0 };
+
+  const columns = Math.ceil(Math.sqrt(userCount));
+  const rows = Math.ceil(userCount / columns);
+
+  return { rows, columns };
+}
+
   function getTrackname(
     roomName: string,
     userId: string,
@@ -2713,8 +2722,6 @@ function SessionPage() {
   }
 
   const userCount = getUserCount()
-
-  const usersPerPage = 3
   const [pageIndex, setPageIndex] = useState(0)
 
   const userList = Object.entries(users)
@@ -2745,35 +2752,122 @@ function SessionPage() {
     }
   })
 
+  // ---- users shown per page for small screens ----
+  const PER_PAGE = 3;
+  // ---- small-screen detection ----
+  const [isSmallScreen, setIsSmallScreen] = useState(false);
   useEffect(() => {
-    if (pageIndex > 0 && userCount <= 3) {
-      setPageIndex(0)
-    }
-  }, [userCount, pageIndex])
+    const mql = window.matchMedia('(max-width: 767.98px)');
+    const onChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      setIsSmallScreen('matches' in e ? e.matches : (e as MediaQueryList).matches);
+    };
+    onChange(mql); 
+    mql.addEventListener('change', onChange as any);
+    return () => mql.removeEventListener('change', onChange as any);
+  }, []);
 
-  const [isSmallScreen, setIsSmallScreen] = useState(false)
+  // ---- visible users (only on small screens) ----
+  const usersToRender = React.useMemo(() => {
+    if (!isSmallScreen) return usersWithScreenshare;
+    const start = pageIndex * PER_PAGE;
+    return usersWithScreenshare.slice(start, start + PER_PAGE);
+  }, [isSmallScreen, pageIndex, usersWithScreenshare]);
 
+  // ---- total pages derived from the actual tile list ----
+  const totalPages = React.useMemo(() => {
+    if (!isSmallScreen) return 1;
+    return Math.max(1, Math.ceil(usersWithScreenshare.length / PER_PAGE));
+  }, [isSmallScreen, usersWithScreenshare.length]);
+
+  // ---- clamp pageIndex when counts or screen size change ----
   useEffect(() => {
-    function handleResize() {
-      setIsSmallScreen(window.innerWidth < 768)
+    if (!isSmallScreen) return;              
+    if (pageIndex > totalPages - 1) {
+      setPageIndex(totalPages - 1);
     }
-    handleResize()
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
-  }, [])
+  }, [isSmallScreen, totalPages, pageIndex]);
 
-  const usersToRender = isSmallScreen
-    ? pageIndex === 0
-      ? usersWithScreenshare.slice(0, 3)
-      : usersWithScreenshare.slice(3, 6)
-    : usersWithScreenshare
-
+  // ---- clear maximize if its tile is no longer visible ----
   useEffect(() => {
-    if (maximizedUserId && !usersToRender.find((u) => u.id === maximizedUserId)) {
-      console.log(`Maximized user ${maximizedUserId} no longer exists, clearing maximized state`)
-      setMaximizedUserId(null)
+    if (maximizedUserId && !usersToRender.find(u => u.id === maximizedUserId)) {
+      setMaximizedUserId(null);
     }
-  }, [maximizedUserId, usersToRender])
+  }, [maximizedUserId, usersToRender]);
+
+  // ---- trigger rebinding when page changes ----
+  const prevPageIndexRef = useRef(pageIndex);
+  
+  useEffect(() => {
+    if (!isSmallScreen) return; // Only needed for pagination
+    
+    // Skip if pagination is not actually needed
+    const totalUsers = usersWithScreenshare.length;
+    if (totalUsers <= PER_PAGE) {
+      console.log(`🚫 Skipping pagination rebinding - only ${totalUsers} users (≤ ${PER_PAGE}), no pagination needed`);
+      return;
+    }
+    
+    // Skip initial render and only run when pageIndex actually changes
+    if (prevPageIndexRef.current === pageIndex) {
+      return;
+    }
+    
+    console.log(`🔄 Page changed from ${prevPageIndexRef.current} to ${pageIndex}, triggering rebinding for visible users`);
+    prevPageIndexRef.current = pageIndex;
+    
+    // Get current users to render based on current pageIndex
+    const currentUsersToRender = usersToRender;
+    
+    currentUsersToRender.forEach(user => {
+      if (users[user.id]) {
+        console.log(`📺 Triggering rebinding check for user ${user.id} on page ${pageIndex}`);
+        
+        // Handle self video and screenshare
+        if (isSelf(user.id)) {
+          console.log(`👤 Rebinding self video for user ${user.id}`);
+          if (selfVideoRef.current && selfMediaStream.current) {
+            selfVideoRef.current.srcObject = selfMediaStream.current;
+            selfVideoRef.current.muted = true;
+            console.log(`✅ Self video rebound successfully`);
+          }
+          return; 
+        }
+        
+        // Handle screenshare virtual user 
+        if ((user as any).originalUserId && isSelf((user as any).originalUserId)) {
+          console.log(`🖥️ Rebinding self screenshare for user ${user.id}`);
+          if (selfScreenshareRef.current && selfScreenshareStream.current && isScreenSharing) {
+            selfScreenshareRef.current.srcObject = selfScreenshareStream.current;
+            selfScreenshareRef.current.muted = true;
+            console.log(`✅ Self screenshare rebound successfully`);
+          }
+          return;
+        }
+        
+        // Handle remote users (canvas-based workers)
+        // TODO: OPTIMIZE - Consider already subscribed users, do not try to subscribe again
+        if ((user as any).originalUserId) {
+          // Remote screenshare virtual user
+          const screenshareCanvasRef = remoteScreenshareCanvasRefs[(user as any).originalUserId];
+          if (screenshareCanvasRef) {
+            console.log(`🖥️ Triggering screenshare rebinding for remote user ${(user as any).originalUserId}`);
+            handleRemoteScreenshare(screenshareCanvasRef);
+          }
+        } else {
+          // Regular remote video user
+          const videoCanvasRef = remoteCanvasRefs[user.id];
+          if (videoCanvasRef) {
+            handleRemoteVideo(videoCanvasRef);
+          }
+        }
+      }
+    });
+  }, [pageIndex]);
+
+  // ---- grid dims based on rendered users----
+  const { rows, columns } = isSmallScreen
+    ? { rows: usersToRender.length, columns: 1 }
+    : getGridDimensions(usersToRender.length);
 
   useEffect(() => {
     const handleCanvasResize = () => {
@@ -2824,18 +2918,40 @@ function SessionPage() {
   return (
     <div className="h-screen bg-gray-900 flex flex-col overflow-hidden" style={{ height: '100dvh' }}>
       {/* Header */}
-      <div className="bg-gray-800 px-6 py-3 flex justify-between items-center border-b border-gray-700 flex-shrink-0">
-        <div className="flex items-center space-x-4">
-          <h1 className="text-white text-xl font-semibold">MOQtail Demo - Room: {roomState?.name}</h1>
-          <div className="flex items-center space-x-2 text-gray-300">
-            <Users className="w-4 h-4" />
-            <span className="text-sm">
-              {getUserCount()} participant{userCount > 1 ? 's' : ''}
+      <div className="bg-gray-800 px-4 py-2 flex flex-wrap md:flex-nowrap justify-between items-center border-b border-gray-700">
+        {/* Left: Room Title */}
+        <div className="flex items-center flex-1 min-w-0 space-x-2 md:space-x-4 overflow-hidden">
+          <h1 className="text-white text-sm md:text-xl font-semibold truncate">
+            <span className="hidden sm:inline">MOQtail Demo - Room: </span>
+            <span className="inline sm:hidden">MOQtail - Room: </span>
+            {roomState?.name}
+          </h1>
+
+          {/* Participants */}
+          <div className="flex items-center space-x-1 text-gray-300 text-xs md:text-sm flex-shrink-0">
+            <Users className="w-3 h-3 md:w-4 md:h-4" />
+            <span className="truncate">
+              {getUserCount()}
+              <span className="hidden sm:inline"> participant{userCount > 1 ? 's' : ''}</span>
             </span>
           </div>
         </div>
-        <div className={`flex items-center space-x-2 ${timeRemainingColor}`}>
-          <span className="text-base font-semibold">⏱️ Time left: {timeRemaining}</span>
+
+        {/* Right: Timer + End Call */}
+        <div
+          className={`flex items-center text-xs md:text-base font-semibold ml-2 md:ml-4 flex-shrink-0 ${timeRemainingColor}`}
+        >
+          <span className="hidden md:inline">⏱️ Remaining Time: </span>
+          <span className="md:hidden">⏱️</span>
+          <span className="inline-block min-w-[3ch] text-right tabular-nums ml-1">{timeRemaining}</span>
+
+          {/* End Call Button */}
+          <button
+            onClick={leaveRoom}
+            className="ml-2 md:ml-4 p-2 md:p-3 rounded-full bg-red-600 hover:bg-red-700 text-white transition-all duration-200 flex-shrink-0"
+          >
+            <PhoneOff className="w-4 h-4 md:w-5 md:h-5 rotate-135" />
+          </button>
         </div>
       </div>
 
@@ -2872,26 +2988,49 @@ function SessionPage() {
       )}
 
       {/* Main Content */}
-      <div className="flex-1 flex min-h-0">
+      <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* Video Grid Area */}
         <div className={`flex-1 p-4 ${isChatOpen ? 'pr-2' : 'pr-4'} min-h-0`}>
-          <div className="grid gap-3 h-full grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
+          <div
+            className="video-grid w-full h-full gap-2"
+            style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`, 
+              gridTemplateRows: `repeat(${rows}, 1fr)`,           
+              justifyContent: 'center',     
+              alignContent: 'center',       
+            }}
+          >
             {usersToRender.map((user) => (
               <div
                 key={user.id}
-                className={`bg-gray-800 rounded-lg overflow-hidden group aspect-video transition-all duration-300 ${
+                className={`bg-gray-800 rounded-lg overflow-hidden group transition-all duration-300 ${
                   maximizedUserId === user.id
                     ? 'absolute inset-0 w-full h-full z-20'
                     : maximizedUserId
                       ? 'hidden'
-                      : 'relative'
+                      : 'relative w-full h-full'
                 }`}
+                style={{
+                  aspectRatio: maximizedUserId === user.id ? 'auto' : '16/9',
+                  minWidth: 0, 
+                  minHeight: 0, 
+                }}
               >
                 {(user as any).originalUserId ? (
                   <>
                     {/* This is a screenshare virtual user */}
                     {isSelf((user as any).originalUserId) ? (
-                      <video ref={selfScreenshareRef} autoPlay muted className="w-full h-full object-cover" />
+                      <video 
+                        ref={selfScreenshareRef} 
+                        autoPlay 
+                        muted 
+                        className="w-full h-full" 
+                        style={{
+                          objectFit: 'contain',
+                          objectPosition: 'center',
+                        }}
+                      />
                     ) : (
                       <canvas
                         ref={remoteScreenshareCanvasRefs[(user as any).originalUserId]}
@@ -2919,11 +3058,11 @@ function SessionPage() {
                       ref={selfVideoRef}
                       autoPlay
                       muted
+                      className="w-full h-full"
                       style={{
                         transform: 'scaleX(-1)',
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover',
+                        objectFit: 'contain',
+                        objectPosition: 'center',
                       }}
                     />
                     {/* Show initials when video is off */}
@@ -2950,7 +3089,11 @@ function SessionPage() {
                       data-screensharetrackalias={user?.publishedTracks?.screenshare?.alias}
                       data-announced={user?.publishedTracks?.video?.announced}
                       data-videoquality={userVideoQualities[user.id] || 'SD'}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full"
+                      style={{
+                        objectFit: 'contain',
+                        objectPosition: 'center',
+                      }}
                     />
                     {/* Show initials when remote video is off */}
                     {!user.hasVideo && (
@@ -3588,31 +3731,18 @@ function SessionPage() {
           <MonitorUp className="w-5 h-5" />
         </button>
         {/* Pagination Buttons */}
-        {userCount > usersPerPage && isSmallScreen && (
-          <>
+        {totalPages > 1 && isSmallScreen && (
+          Array.from({ length: totalPages }).map((_, i) => (
             <button
-              onClick={() => setPageIndex(0)}
-              disabled={pageIndex === 0}
+              key={i}
+              onClick={() => setPageIndex(i)}
+              disabled={pageIndex === i}
               className="px-3 py-1 bg-gray-700 rounded text-white disabled:opacity-50"
             >
-              1
+              {i + 1}
             </button>
-            <button
-              onClick={() => setPageIndex(1)}
-              disabled={pageIndex === 1}
-              className="px-3 py-1 bg-gray-700 rounded text-white disabled:opacity-50"
-            >
-              2
-            </button>
-          </>
+          ))
         )}
-        {/* End Call Button */}
-        <button
-          onClick={leaveRoom}
-          className="p-3 rounded-full bg-red-600 hover:bg-red-700 text-white transition-all duration-200 ml-8"
-        >
-          <PhoneOff className="w-5 h-5 transform rotate-135" />
-        </button>
         {/* Chat Toggle Button (when chat is closed) */}
         {!isChatOpen && (
           <button

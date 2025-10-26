@@ -1157,8 +1157,8 @@ function getOrCreateWorkerAndCanvas(canvas: HTMLCanvasElement) {
 
     resizeCanvasWorker(
       canvas,
-      window.appSettings.videoDecoderConfig.codedHeight || 640,
-      window.appSettings.videoDecoderConfig.codedWidth || 360,
+      window.appSettings.videoDecoderConfig.codedHeight || 360,
+      window.appSettings.videoDecoderConfig.codedWidth || 640,
     )
     return existingWorker
   }
