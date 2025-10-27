@@ -92,6 +92,7 @@ function SessionPage() {
     clearSession,
   } = useSession()
   const [isMicOn, setIsMicOn] = useState(false)
+  const [hasLocalAudio, setHasLocalAudio] = useState<boolean>(false)
   const [isCamOn, setisCamOn] = useState(false)
   const [isScreenSharing, setIsScreenSharing] = useState(false)
   const [isChatOpen, setIsChatOpen] = useState(true) // TODO: implement MoQ chat
@@ -601,6 +602,11 @@ function SessionPage() {
       return
     }
 
+    if (kind === 'mic' && !hasLocalAudio) {
+      console.warn('No local microphone available')
+      return
+    }
+
     const setter = kind === 'mic' ? setIsMicOn : setisCamOn
     setter((prev) => {
       const newValue = !prev
@@ -683,6 +689,52 @@ function SessionPage() {
   }
   const handleToggleMic = () => {
     handleToggle('mic')
+  }
+
+  // Acquire audio stream safely. Returns an empty MediaStream when no mic is available
+  // or permission is denied, so callers should check for tracks before using.
+  async function getAudioStreamOrEmpty(): Promise<MediaStream> {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: true })
+      } catch (err) {
+        console.warn('getUserMedia failed (no enumerateDevices):', err)
+        return new MediaStream()
+      }
+    }
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const hasAudioInput = devices.some((d) => d.kind === 'audioinput')
+      if (!hasAudioInput) {
+        console.warn('No audioinput devices found (no microphone)')
+        return new MediaStream()
+      }
+
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: true })
+      } catch (err: any) {
+        if (err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')) {
+          // Permission denied
+          alert('Microphone access is blocked. Please allow microphone permission to enable audio.')
+          return new MediaStream()
+        }
+        if (err && (err.name === 'NotFoundError' || err.name === 'OverconstrainedError')) {
+          console.warn('Microphone not found when trying to open it:', err)
+          return new MediaStream()
+        }
+        console.error('Unexpected error acquiring microphone:', err)
+        return new MediaStream()
+      }
+    } catch (err) {
+      console.warn('enumerateDevices failed, falling back to getUserMedia:', err)
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: true })
+      } catch (err2) {
+        console.warn('getUserMedia fallback failed:', err2)
+        return new MediaStream()
+      }
+    }
   }
 
   const handleQualityTransition = async (
@@ -1030,9 +1082,15 @@ function SessionPage() {
           return
         }
 
-        selfMediaStream.current = await navigator.mediaDevices.getUserMedia({ audio: true })
+        // Acquire audio stream safely (may return an empty stream when no mic or permission denied)
+        selfMediaStream.current = await getAudioStreamOrEmpty()
         const audioTracks = selfMediaStream.current.getAudioTracks()
-        audioTracks.forEach((track) => (track.enabled = false))
+        if (audioTracks.length > 0) {
+          audioTracks.forEach((track) => (track.enabled = false))
+        } else {
+          console.warn('No audio tracks available; running without microphone')
+        }
+        setHasLocalAudio(audioTracks.length > 0)
 
         //console.log('Got user media:', selfMediaStream.current);
         setMediaReady(true)
@@ -1143,18 +1201,26 @@ function SessionPage() {
         if (hasVideoTrack) {
           videoPromise = videoEncoderObjRef.current.start(selfMediaStream.current)
         }
-        const audioPromise = startAudioEncoder({
-          stream: selfMediaStream.current,
-          audioFullTrackName,
-          audioStreamController: tracks.getAudioStreamController(),
-          publisherPriority: 1,
-          audioGroupId: 0,
-          objectForwardingPreference: ObjectForwardingPreference.Subgroup,
-        }).then((audioEncoderResult) => {
-          audioEncoderObjRef.current = audioEncoderResult
-          audioEncoderObjRef.current.setEncoding(isMicOn)
-          return audioEncoderResult
-        })
+
+        let audioPromise: Promise<any> = Promise.resolve()
+        const audioTracksHere = selfMediaStream.current.getAudioTracks()
+        if (audioTracksHere.length > 0) {
+          audioPromise = startAudioEncoder({
+            stream: selfMediaStream.current,
+            audioFullTrackName,
+            audioStreamController: tracks.getAudioStreamController(),
+            publisherPriority: 1,
+            audioGroupId: 0,
+            objectForwardingPreference: ObjectForwardingPreference.Subgroup,
+          }).then((audioEncoderResult) => {
+            audioEncoderObjRef.current = audioEncoderResult
+            audioEncoderObjRef.current.setEncoding(isMicOn)
+            return audioEncoderResult
+          })
+        } else {
+          // keep resolved so that promise.all works
+          audioPromise = Promise.resolve()
+        }
         chatSenderRef.current = initializeChatMessageSender({
           chatFullTrackName,
           chatStreamController: tracks.getChatStreamController(),
