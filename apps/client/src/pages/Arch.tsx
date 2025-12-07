@@ -24,7 +24,7 @@ function Arch() {
       className="moqtail-bg z-10 container mx-auto flex h-full w-full flex-col items-center justify-center pt-8 max-lg:px-4"
     >
       <h1 className="text-center text-2xl font-bold text-black md:text-4xl">Time Travel in MOQ Conferencing</h1>
-      <div className="w-full max-w-5xl overflow-x-auto">
+      <div className="w-full max-w-5xl overflow-x-auto z-10">
         <TTPipeline className="h-auto w-full min-w-[800px]" />
       </div>
       <div className="pointer-events-none absolute top-0 left-0 h-full w-full overflow-hidden">
