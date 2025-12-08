@@ -255,7 +255,7 @@ export default function JoinPage() {
   return (
     <div className="join-container">
       <div className="join-logo">
-        <img src="/moqtail.svg" alt="MoqTail Logo" width="100%" height="100%" />
+        <img src="/moqtail.svg" alt="MOQtail Logo" width="100%" height="100%" />
       </div>
       <div className="join-content">
         <nav className="join-nav"></nav>
@@ -338,15 +338,11 @@ export default function JoinPage() {
             {hasCriticalMissing ? 'Browser Not Compatible - Check Wiki' : connecting ? 'Connecting...' : 'Join'}
           </button>
         </form>
-        <div className="notice">
-          <ul style={{ listStyleType: 'disc', paddingLeft: '1.2rem', margin: '0', textAlign: 'left' }}>
-            <li>
+        <div className="notice">   
               Session duration in each room is limited to {roomLimits.sessionDurationMinutes} minute
               {roomLimits.sessionDurationMinutes !== 1 ? 's' : ''} and session size is limited to{' '}
               {roomLimits.maxUsersPerRoom} participants.
-            </li>
             {commitHash && (
-              <li>
                 Commit:{' '}
                 <a
                   href={`https://github.com/moqtail/demo-timetravel/commit/${commitHash}`}
@@ -356,9 +352,7 @@ export default function JoinPage() {
                 >
                   {commitHash}
                 </a>
-              </li>
             )}
-          </ul>
         </div>
         {error && <div className="error-message">{error}</div>}
       </div>
