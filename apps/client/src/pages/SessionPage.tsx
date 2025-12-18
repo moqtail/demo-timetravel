@@ -134,7 +134,7 @@ function SessionPage() {
   const remoteCanvasRefsRef = useRef<{ [id: string]: React.RefObject<HTMLCanvasElement> }>({})
   const [mediaReady, setMediaReady] = useState(false)
   const [showInfoCards, setShowInfoCards] = useState<{ [userId: string]: boolean }>({})
-  const [infoPanelType, setInfoPanelType] = useState<{ [userId: string]: 'network' | 'codec' }>({})
+  const [infoPanelType, setInfoPanelType] = useState<'network' | 'codec'>('network')
   const [codecData, setCodecData] = useState<{
     [userId: string]: {
       videoCodec: string
@@ -567,13 +567,10 @@ function SessionPage() {
   const toggleInfoCard = (userId: string, panelType: 'network' | 'codec' = 'network') => {
     setShowInfoCards((prev) => ({
       ...prev,
-      [userId]: !prev[userId] || infoPanelType[userId] !== panelType ? true : false,
+      [userId]: !prev[userId] || infoPanelType !== panelType ? true : false,
     }))
 
-    setInfoPanelType((prev) => ({
-      ...prev,
-      [userId]: panelType,
-    }))
+    setInfoPanelType(panelType)
   }
 
   const getUserColorHex = (userId: string): string => {
@@ -1068,6 +1065,9 @@ function SessionPage() {
       }
     }
   }
+
+  // Add this state
+  const [statsPanelUserId, setStatsPanelUserId] = useState<string | null>(null)
 
   useEffect(() => {
     async function startPublisher() {
@@ -3167,9 +3167,17 @@ function SessionPage() {
                   {!isSelf(user.id) &&
                     !(user as any).originalUserId && ( // TODO: Calculate throughputs for self user
                       <button
-                        onClick={() => toggleInfoCard(user.id, 'network')}
+                        onClick={() => {
+                          if (statsPanelUserId === user.id && infoPanelType === 'network') {
+                            setStatsPanelUserId(null)
+                          } else {
+                            setStatsPanelUserId(user.id)
+                            setInfoPanelType('network')
+                          }
+                        }}
+                        // STYLING: Blue if active, Gray if inactive
                         className={`p-1 rounded-full transition-all duration-200 ${
-                          showInfoCards[user.id] && infoPanelType[user.id] === 'network'
+                          statsPanelUserId === user.id && infoPanelType === 'network'
                             ? 'bg-blue-600 hover:bg-blue-700 text-white'
                             : 'bg-gray-700 hover:bg-blue-600 text-white'
                         }`}
@@ -3180,9 +3188,17 @@ function SessionPage() {
                     )}
                   {/* Media Info Button */}
                   <button
-                    onClick={() => toggleInfoCard(user.id, 'codec')}
+                    onClick={() => {
+                      // If already open on this user and this tab, close it. Otherwise open it.
+                      if (statsPanelUserId === user.id && infoPanelType === 'codec') {
+                        setStatsPanelUserId(null)
+                      } else {
+                        setStatsPanelUserId(user.id)
+                        setInfoPanelType('codec')
+                      }
+                    }}
                     className={`p-1 rounded-full transition-all duration-200 ${
-                      showInfoCards[user.id] && infoPanelType[user.id] === 'codec'
+                      statsPanelUserId === user.id && infoPanelType === 'codec'
                         ? 'bg-purple-600 hover:bg-purple-700 text-white'
                         : 'bg-gray-700 hover:bg-purple-600 text-white'
                     }`}
@@ -3202,11 +3218,11 @@ function SessionPage() {
 
                 {/* Info card overlay */}
                 {showInfoCards[user.id] && (
-                  <div className="absolute inset-0 bg-white flex flex-col p-3 rounded-lg overflow-hidden">
+                  <div className="absolute top-0 right-0 w-64 h-full bg-white/90 backdrop-blur-sm shadow-xl flex flex-col p-3 z-20 border-l border-gray-200">
                     {/* Close button */}
                     <div className="absolute top-3 right-3 z-10">
                       <button
-                        onClick={() => toggleInfoCard(user.id, infoPanelType[user.id] || 'network')}
+                        onClick={() => toggleInfoCard(user.id, infoPanelType || 'network')}
                         className="p-1 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 transition-all duration-200"
                       >
                         <X className="w-3 h-3" />
@@ -3215,7 +3231,7 @@ function SessionPage() {
 
                     <div className="w-full h-full flex flex-col min-h-0">
                       {/* Conditional rendering based on panel type */}
-                      {!infoPanelType[user.id] || infoPanelType[user.id] === 'network' ? (
+                      {!infoPanelType || infoPanelType === 'network' ? (
                         <>
                           {/* Network Stats Panel */}
                           {/* Header */}
@@ -3485,141 +3501,295 @@ function SessionPage() {
           </div>
         </div>
         {/* Chat Panel */}
-        {isChatOpen && (
-          <div className="w-80 bg-white border-l border-gray-200 flex flex-col flex-shrink-0">
-            {/* Chat Header */}
-            <div className="p-4 border-b border-gray-200 flex justify-between items-center flex-shrink-0">
-              <div className="flex items-center space-x-2">
-                <MessageSquare className="w-5 h-5 text-gray-600" />
-                <h3 className="font-semibold text-gray-900">Chat</h3>
-              </div>
-              <button
-                onClick={() => setIsChatOpen(false)}
-                className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-gray-600 transition-colors"
-              >
-                ×
-              </button>
-            </div>
-            {/* Chat Messages */}
+        {/* SIDEBAR CONTAINER */}
+        {/* ======================= UNIFIED SIDEBAR (FLOATING ENABLED) ======================= */}
+        {(isChatOpen || statsPanelUserId) && (
+          <div
+            className={`
+      w-80 bg-white border-l border-gray-200 flex flex-col flex-shrink-0 transition-all duration-300
+      ${
+        maximizedUserId
+          ? 'absolute right-0 top-0 h-full z-50 shadow-2xl bg-opacity-95 backdrop-blur'
+          : 'relative h-full'
+      }
+    `}
+          >
+            {/* --- TOP HALF: CHAT --- */}
             <div
-              ref={chatMessagesRef}
-              className="flex-1 overflow-y-auto p-4 space-y-3 min-h-0"
-              onScroll={handleChatScroll}
+              className={`flex flex-col min-h-0 ${isChatOpen ? 'flex-1' : 'hidden'} ${statsPanelUserId ? 'h-1/2 border-b-4 border-gray-200' : 'h-full'}`}
             >
-              {chatMessages.map((message) => {
-                const isOwnMessage = message.sender === username
-                const senderUserId = getSenderUserId(message.sender)
-                return (
-                  <div key={message.id} className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-xs lg:max-w-md ${isOwnMessage ? 'order-2' : 'order-1'}`}>
-                      <div
-                        className={`flex items-center space-x-2 mb-1 ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
-                      >
-                        <span
-                          className={`text-sm font-medium`}
+              <div className="p-3 border-b border-gray-200 flex justify-between items-center bg-gray-50 flex-shrink-0">
+                <div className="flex items-center space-x-2">
+                  <MessageSquare className="w-4 h-4 text-gray-600" />
+                  <h3 className="font-semibold text-gray-900 text-sm">Chat</h3>
+                </div>
+                <button
+                  onClick={() => setIsChatOpen(false)}
+                  className="p-1 hover:bg-red-100 hover:text-red-600 rounded"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* --- CHAT CONTENT --- */}
+              {/* Use your existing chat map logic here */}
+              <div
+                ref={chatMessagesRef}
+                className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0"
+                onScroll={handleChatScroll}
+              >
+                {chatMessages.map((message) => {
+                  const isOwnMessage = message.sender === username
+                  const senderUserId = getSenderUserId(message.sender)
+                  return (
+                    <div key={message.id} className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[85%] ${isOwnMessage ? 'order-2' : 'order-1'}`}>
+                        <div
+                          className={`text-[10px] mb-1 ${isOwnMessage ? 'text-right' : 'text-left'}`}
                           style={{ color: isOwnMessage ? '#3b82f6' : getUserColorHex(senderUserId) }}
                         >
                           {isOwnMessage ? 'You' : message.sender}
-                        </span>
-                        <span className="text-xs text-gray-500">{message.timestamp}</span>
-                      </div>
-                      <div
-                        className={`text-sm px-3 py-2 rounded-lg ${
-                          isOwnMessage
-                            ? 'bg-blue-500 text-white rounded-br-none'
-                            : 'bg-gray-100 text-gray-800 rounded-bl-none'
-                        }`}
-                        style={{
-                          wordBreak: 'break-word',
-                          whiteSpace: 'pre-wrap',
-                          fontSize: '14px',
-                          lineHeight: '1.4',
-                        }}
-                      >
-                        {renderMessageWithEmojis(message.message)}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-            {/* Chat Input */}
-            <div className="p-4 border-t border-gray-200 flex-shrink-0 relative">
-              {/* Quick Emoji Reactions */}
-              <div className="mb-3">
-                <div className="flex items-center space-x-1">
-                  <span className="text-xs text-gray-500 mr-2">Quick:</span>
-                  {quickEmojis.map((emoji, index) => (
-                    <button
-                      key={index}
-                      onClick={() => addEmoji(emoji)}
-                      className="text-lg hover:bg-gray-100 rounded p-1 transition-colors duration-150 hover:scale-110 transform"
-                      title={`Add ${emoji}`}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Emoji Picker */}
-              {showEmojiPicker && (
-                <div
-                  ref={emojiPickerRef}
-                  className="absolute bottom-full left-4 right-4 mb-2 bg-white border border-gray-200 rounded-lg shadow-lg z-10"
-                >
-                  <div className="p-2 border-b border-gray-100">
-                    <p className="text-xs text-gray-500 font-medium">Choose an emoji</p>
-                  </div>
-                  <div className="p-3 max-h-40 overflow-y-auto">
-                    <div className="grid grid-cols-8 gap-1">
-                      {allEmojis.map((emoji, index) => (
-                        <button
-                          key={index}
-                          onClick={() => addEmoji(emoji)}
-                          className="text-xl hover:bg-gray-100 rounded p-2 transition-colors duration-150 hover:scale-110 transform"
-                          title={`Add ${emoji}`}
-                          style={{ fontSize: '18px' }}
+                        </div>
+                        <div
+                          className={`text-sm px-2 py-1.5 rounded-lg ${isOwnMessage ? 'bg-blue-500 text-white rounded-br-none' : 'bg-gray-100 text-gray-800 rounded-bl-none'}`}
                         >
-                          {emoji}
-                        </button>
-                      ))}
+                          {renderMessageWithEmojis(message.message)}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex space-x-2">
-                <div className="flex-1 relative">
+                  )
+                })}
+              </div>
+              {/* Chat Input */}
+              <div className="p-2 border-t border-gray-200 bg-white">
+                <div className="flex space-x-2">
                   <input
                     ref={chatInputRef}
                     type="text"
                     value={chatMessage}
                     onChange={(e) => setChatMessage(e.target.value)}
-                    onKeyPress={(e) => {
-                      if (e.key === 'Enter') {
-                        handleSendMessage()
-                      }
-                    }}
-                    placeholder="Type a message..."
-                    className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                    placeholder="Type message..."
+                    className="flex-1 px-3 py-1.5 text-sm border border-gray-300 rounded focus:outline-none focus:border-blue-500"
                   />
-                  <button
-                    onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-                    className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1 hover:bg-gray-100 rounded transition-colors"
-                    title="Add emoji"
-                  >
-                    <Smile className="w-4 h-4 text-gray-500" />
+                  <button onClick={handleSendMessage} className="px-3 bg-blue-600 text-white rounded hover:bg-blue-700">
+                    <Send className="w-4 h-4" />
                   </button>
                 </div>
-                <button
-                  onClick={handleSendMessage}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center"
-                >
-                  <Send className="w-4 h-4" />
-                </button>
               </div>
             </div>
+
+            {/* --- BOTTOM HALF: STATS PANEL --- */}
+            {statsPanelUserId && (
+              <div className={`flex flex-col min-h-0 bg-gray-50 ${isChatOpen ? 'h-1/2' : 'h-full'}`}>
+                {/* HEADER */}
+                <div className="p-3 border-b border-gray-200 flex justify-between items-center bg-white flex-shrink-0">
+                  <div className="flex items-center space-x-2 overflow-hidden">
+                    {infoPanelType === 'network' ? (
+                      <Activity className="w-4 h-4 text-blue-600" />
+                    ) : (
+                      <Info className="w-4 h-4 text-purple-600" />
+                    )}
+                    <h3 className="font-semibold text-gray-900 text-sm truncate"></h3>
+                  </div>
+                  <button
+                    onClick={() => setStatsPanelUserId(null)}
+                    className="p-1 hover:bg-red-100 hover:text-red-600 rounded"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* TAB SWITCHER */}
+                <div className="flex border-b border-gray-200 bg-white flex-shrink-0">
+                  <button
+                    onClick={() => setInfoPanelType('network')}
+                    className={`flex-1 py-2 text-xs font-bold ${infoPanelType === 'network' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:bg-gray-50'}`}
+                  >
+                    NETWORK
+                  </button>
+                  <button
+                    onClick={() => setInfoPanelType('codec')}
+                    className={`flex-1 py-2 text-xs font-bold ${infoPanelType === 'codec' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-gray-500 hover:bg-gray-50'}`}
+                  >
+                    MEDIA INFO
+                  </button>
+                </div>
+
+                {/* CONTENT AREA */}
+                <div className="flex-1 overflow-y-auto p-3">
+                  {/* === TAB 1: NETWORK GRAPHS === */}
+                  {infoPanelType === 'network' && (
+                    <>
+                      <div className="grid grid-cols-3 gap-2 mb-4">
+                        <div className="bg-white p-2 rounded border text-center shadow-sm">
+                          <div className="text-[10px] text-gray-500 font-bold">VIDEO</div>
+                          <div className="text-sm font-bold text-blue-600">
+                            {telemetryData[statsPanelUserId]?.videoBitrate?.toFixed(0) || 0}k
+                          </div>
+                        </div>
+                        <div className="bg-white p-2 rounded border text-center shadow-sm">
+                          <div className="text-[10px] text-gray-500 font-bold">AUDIO</div>
+                          <div className="text-sm font-bold text-gray-600">
+                            {telemetryData[statsPanelUserId]?.audioBitrate?.toFixed(0) || 0}k
+                          </div>
+                        </div>
+                        <div className="bg-white p-2 rounded border text-center shadow-sm">
+                          <div className="text-[10px] text-gray-500 font-bold">RTT</div>
+                          <div className="text-sm font-bold text-red-500">
+                            {telemetryData[statsPanelUserId]?.latency || 0}ms
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-white rounded border p-2 h-48 relative shadow-sm">
+                        <div className="absolute inset-0 p-4">
+                          <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
+                            {/* Grid */}
+                            <line x1="0" y1="0" x2="300" y2="0" stroke="#f3f4f6" strokeWidth="1" />
+                            <line x1="0" y1="50" x2="300" y2="50" stroke="#f3f4f6" strokeWidth="1" />
+                            <line x1="0" y1="100" x2="300" y2="100" stroke="#f3f4f6" strokeWidth="1" />
+                            {/* Lines */}
+                            <polyline
+                              fill="none"
+                              stroke="#3b82f6"
+                              strokeWidth="2"
+                              points={
+                                videoBitrateHistory[statsPanelUserId]
+                                  ?.map(
+                                    (val, i) =>
+                                      `${(i / Math.max(videoBitrateHistory[statsPanelUserId].length - 1, 1)) * 300},${100 - Math.min((val / 500) * 100, 100)}`,
+                                  )
+                                  .join(' ') || ''
+                              }
+                            />
+                            <polyline
+                              fill="none"
+                              stroke="#ef4444"
+                              strokeWidth="2"
+                              points={
+                                latencyHistory[statsPanelUserId]
+                                  ?.map(
+                                    (val, i) =>
+                                      `${(i / Math.max(latencyHistory[statsPanelUserId].length - 1, 1)) * 300},${100 - Math.min((val / 200) * 100, 100)}`,
+                                  )
+                                  .join(' ') || ''
+                              }
+                            />
+                          </svg>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* === TAB 2: CODEC TEXT (YOUR RESTORED CODE) === */}
+                  {infoPanelType === 'codec' && (
+                    <div className="space-y-1 flex-1 text-xs overflow-y-auto">
+                      {/* Video & Audio Group */}
+                      <div className="bg-white border border-gray-200 rounded p-2 mb-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          {/* Video Column */}
+                          <div>
+                            <div className="font-semibold text-blue-600 mb-1 flex items-center text-xs">
+                              <Video className="w-3 h-3 mr-1" />
+                              Video
+                            </div>
+                            <div className="space-y-0.5">
+                              <div className="flex justify-between">
+                                <span className="text-gray-500">Codec:</span>
+                                <span className="font-medium text-black">
+                                  {codecData[statsPanelUserId]?.videoCodec || 'N/A'}
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-500">Res:</span>
+                                <span className="font-medium text-black">
+                                  {codecData[statsPanelUserId]?.resolution || 'N/A'}
+                                </span>
+                              </div>
+                              {codecData[statsPanelUserId]?.videoBitrate && (
+                                <div className="flex justify-between">
+                                  <span className="text-gray-500">Bitrate:</span>
+                                  <span className="font-medium text-black">
+                                    {(codecData[statsPanelUserId].videoBitrate! / 1000).toFixed(0)}kbps
+                                  </span>
+                                </div>
+                              )}
+                              <div className="flex justify-between">
+                                <span className="text-gray-500">FPS:</span>
+                                <span className="font-medium text-black">
+                                  {codecData[statsPanelUserId]?.frameRate || 'N/A'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Audio Column */}
+                          <div>
+                            <div className="font-semibold text-green-600 mb-1 flex items-center text-xs">
+                              <Mic className="w-3 h-3 mr-1" />
+                              Audio
+                            </div>
+                            <div className="space-y-0.5">
+                              <div className="flex justify-between">
+                                <span className="text-gray-500">Codec:</span>
+                                <span className="font-medium text-black">
+                                  {codecData[statsPanelUserId]?.audioCodec || 'N/A'}
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-500">Hz:</span>
+                                <span className="font-medium text-black">
+                                  {codecData[statsPanelUserId]?.sampleRate !== undefined
+                                    ? codecData[statsPanelUserId].sampleRate === 0
+                                      ? '0'
+                                      : (codecData[statsPanelUserId].sampleRate / 1000).toFixed(0) + 'k'
+                                    : 'N/A'}
+                                </span>
+                              </div>
+                              {codecData[statsPanelUserId]?.audioBitrate && (
+                                <div className="flex justify-between">
+                                  <span className="text-gray-500">Bitrate:</span>
+                                  <span className="font-medium text-black">
+                                    {(codecData[statsPanelUserId].audioBitrate! / 1000).toFixed(0)}kbps
+                                  </span>
+                                </div>
+                              )}
+                              {codecData[statsPanelUserId]?.numberOfChannels && (
+                                <div className="flex justify-between">
+                                  <span className="text-gray-500">Ch:</span>
+                                  <span className="font-medium text-black">
+                                    {codecData[statsPanelUserId].numberOfChannels}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Sync Information */}
+                      <div className="bg-white border border-gray-200 rounded p-2">
+                        <div className="font-semibold text-purple-600 mb-1 flex items-center text-xs">
+                          <Activity className="w-3 h-3 mr-1" />
+                          Sync & Buffer
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">A/V Drift: </span>
+                            <span className="font-semibold text-green-600">N/A</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-500">Buffer:</span>
+                            <span className="font-semibold text-green-600">N/A</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
