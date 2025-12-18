@@ -3342,12 +3342,12 @@ function SessionPage() {
                     <>
                       {/* Network Stats Panel */}
                       {/* Header */}
-                      <div className="mb-2 flex-shrink-0">
+                      <div className="mb-2">
                         <h3 className="text-lg font-bold text-black leading-tight">Network Stats</h3>
                       </div>
 
                       {/* Legend */}
-                      <div className="grid grid-cols-3 gap-1 mb-2 flex-shrink-0">
+                      <div className="grid grid-cols-3 gap-1 mb-2">
                         <div className="flex items-center space-x-1">
                           <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
                           <span className="text-xs font-medium text-gray-700">VIDEO</span>
@@ -3363,7 +3363,7 @@ function SessionPage() {
                       </div>
 
                       {/* Values with smooth transitions */}
-                      <div className="grid grid-cols-3 gap-1 mb-3 flex-shrink-0">
+                      <div className="grid grid-cols-3 gap-1 mb-3">
                         <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
                           {telemetryData[statsPanelUserId]
                             ? `${telemetryData[statsPanelUserId].videoBitrate.toFixed(0)} Kbit/s`
@@ -3382,7 +3382,7 @@ function SessionPage() {
                       </div>
 
                       {/* Network Stats Graph */}
-                      <div className="flex-1 relative min-h-0">
+                      <div className="h-1/2 flex-1 relative min-h-0 w-full pb-2">
                         {/* Graph container */}
                         <div className="h-full bg-gray-50 rounded relative overflow-hidden border border-gray-200 min-h-16">
                           {/* Left Y-axis labels (Bitrate) */}
@@ -3409,6 +3409,7 @@ function SessionPage() {
                                 fill="none"
                                 stroke="#3b82f6"
                                 strokeWidth="1.5"
+                                vectorEffect="non-scaling-stroke"
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 points={
@@ -3436,6 +3437,7 @@ function SessionPage() {
                                 fill="none"
                                 stroke="#6b7280"
                                 strokeWidth="1.5"
+                                vectorEffect="non-scaling-stroke"
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 points={
@@ -3463,6 +3465,7 @@ function SessionPage() {
                                 fill="none"
                                 stroke="#ef4444"
                                 strokeWidth="1.5"
+                                vectorEffect="non-scaling-stroke"
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
                                 points={
