@@ -3215,287 +3215,6 @@ function SessionPage() {
                     {maximizedUserId === user.id ? <Minimize className="w-4 h-4" /> : <Expand className="w-4 h-4" />}
                   </button>
                 </div>
-
-                {/* Info card overlay */}
-                {showInfoCards[user.id] && (
-                  <div className="absolute top-0 right-0 w-64 h-full bg-white/90 backdrop-blur-sm shadow-xl flex flex-col p-3 z-20 border-l border-gray-200">
-                    {/* Close button */}
-                    <div className="absolute top-3 right-3 z-10">
-                      <button
-                        onClick={() => toggleInfoCard(user.id, infoPanelType || 'network')}
-                        className="p-1 rounded-full bg-gray-200 hover:bg-gray-300 text-gray-600 transition-all duration-200"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </div>
-
-                    <div className="w-full h-full flex flex-col min-h-0">
-                      {/* Conditional rendering based on panel type */}
-                      {!infoPanelType || infoPanelType === 'network' ? (
-                        <>
-                          {/* Network Stats Panel */}
-                          {/* Header */}
-                          <div className="mb-2 flex-shrink-0">
-                            <h3 className="text-lg font-bold text-black leading-tight">Network Stats</h3>
-                          </div>
-
-                          {/* Legend */}
-                          <div className="grid grid-cols-3 gap-1 mb-2 flex-shrink-0">
-                            <div className="flex items-center space-x-1">
-                              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                              <span className="text-xs font-medium text-gray-700">VIDEO</span>
-                            </div>
-                            <div className="flex items-center space-x-1">
-                              <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
-                              <span className="text-xs font-medium text-gray-700">AUDIO</span>
-                            </div>
-                            <div className="flex items-center space-x-1">
-                              <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                              <span className="text-xs font-medium text-gray-700">LATENCY</span>
-                            </div>
-                          </div>
-
-                          {/* Values with smooth transitions */}
-                          <div className="grid grid-cols-3 gap-1 mb-3 flex-shrink-0">
-                            <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
-                              {telemetryData[user.id]
-                                ? `${telemetryData[user.id].videoBitrate.toFixed(0)} Kbit/s`
-                                : 'N/A'}
-                            </span>
-                            <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
-                              {telemetryData[user.id]
-                                ? `${telemetryData[user.id].audioBitrate.toFixed(0)} Kbit/s`
-                                : 'N/A'}
-                            </span>
-                            <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
-                              {!isSelf(user.id) && telemetryData[user.id]
-                                ? `${telemetryData[user.id].latency}ms`
-                                : 'N/A'}
-                            </span>
-                          </div>
-
-                          {/* Network Stats Graph */}
-                          <div className="flex-1 relative min-h-0">
-                            {/* Graph container */}
-                            <div className="h-full bg-gray-50 rounded relative overflow-hidden border border-gray-200 min-h-16">
-                              {/* Left Y-axis labels (Bitrate) */}
-                              <div className="absolute left-1 top-1 text-xs text-gray-500 leading-none">500K</div>
-                              <div className="absolute left-1 top-1/2 text-xs text-gray-500 leading-none">250K</div>
-                              <div className="absolute left-1 bottom-1 text-xs text-gray-500 leading-none">0</div>
-
-                              {/* Right Y-axis labels (Latency) */}
-                              <div className="absolute right-1 top-1 text-xs text-red-500 leading-none">200ms</div>
-                              <div className="absolute right-1 top-1/2 text-xs text-red-500 leading-none">100ms</div>
-                              <div className="absolute right-1 bottom-1 text-xs text-red-500 leading-none">0ms</div>
-
-                              {/* Grid lines */}
-                              <div className="absolute inset-0 flex flex-col justify-between p-1">
-                                {[...Array(3)].map((_, i) => (
-                                  <div key={i} className="border-t border-gray-300 opacity-30"></div>
-                                ))}
-                              </div>
-
-                              {/* Video bitrate line */}
-                              <div className="absolute inset-0 p-2">
-                                <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
-                                  <polyline
-                                    fill="none"
-                                    stroke="#3b82f6"
-                                    strokeWidth="1.5"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    points={
-                                      videoBitrateHistory[user.id] && videoBitrateHistory[user.id].length > 0
-                                        ? videoBitrateHistory[user.id]
-                                            .map((videoBitrate, index) => {
-                                              const x =
-                                                (index / Math.max(videoBitrateHistory[user.id].length - 1, 1)) * 300
-                                              const y = 100 - Math.min((videoBitrate / 500) * 100, 100)
-                                              return `${x},${y}`
-                                            })
-                                            .join(' ')
-                                        : ''
-                                    }
-                                  />
-                                </svg>
-                              </div>
-
-                              {/* Audio bitrate line */}
-                              <div className="absolute inset-0 p-2">
-                                <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
-                                  <polyline
-                                    fill="none"
-                                    stroke="#6b7280"
-                                    strokeWidth="1.5"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    points={
-                                      audioBitrateHistory[user.id] && audioBitrateHistory[user.id].length > 0
-                                        ? audioBitrateHistory[user.id]
-                                            .map((audioBitrate, index) => {
-                                              const x =
-                                                (index / Math.max(audioBitrateHistory[user.id].length - 1, 1)) * 300
-                                              const y = 100 - Math.min((audioBitrate / 500) * 100, 100)
-                                              return `${x},${y}`
-                                            })
-                                            .join(' ')
-                                        : ''
-                                    }
-                                  />
-                                </svg>
-                              </div>
-
-                              {/* Latency line */}
-                              <div className="absolute inset-0 p-2">
-                                <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
-                                  <polyline
-                                    fill="none"
-                                    stroke="#ef4444"
-                                    strokeWidth="1.5"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    points={
-                                      !isSelf(user.id) && latencyHistory[user.id] && latencyHistory[user.id].length > 0
-                                        ? latencyHistory[user.id]
-                                            .map((latency: number, index: number) => {
-                                              const x = (index / Math.max(latencyHistory[user.id].length - 1, 1)) * 300
-                                              const y = 100 - Math.min((latency / 200) * 100, 100)
-                                              return `${x},${y}`
-                                            })
-                                            .join(' ')
-                                        : isSelf(user.id)
-                                          ? '' // No line for self user
-                                          : ''
-                                    }
-                                  />
-                                </svg>
-                              </div>
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          {/* Media Info Panel */}
-                          {/* Header */}
-                          <div className="mb-2 flex-shrink-0">
-                            <h3 className="text-lg font-bold text-black leading-tight">Media Info</h3>
-                          </div>
-
-                          {/* Media Information Grid*/}
-                          <div className="space-y-1 flex-1 text-xs overflow-y-auto">
-                            {/* Video & Audio*/}
-                            <div className="bg-gray-50 rounded p-1">
-                              <div className="grid grid-cols-2 gap-2">
-                                {/* Video */}
-                                <div>
-                                  <div className="font-semibold text-blue-600 mb-1 flex items-center text-xs">
-                                    <Video className="w-3 h-3 mr-1" />
-                                    Video
-                                  </div>
-                                  <div className="space-y-0.5">
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-600">Codec:</span>
-                                      <span className="font-medium text-black">
-                                        {codecData[user.id]?.videoCodec || 'N/A'}
-                                      </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-600">Resolution:</span>
-                                      <span className="font-medium text-black">
-                                        {codecData[user.id]?.resolution || 'N/A'}
-                                      </span>
-                                    </div>
-
-                                    {codecData[user.id]?.videoBitrate && (
-                                      <div className="flex justify-between">
-                                        <span className="text-gray-600">Bitrate:</span>
-                                        <span className="font-medium text-black">
-                                          {(codecData[user.id].videoBitrate! / 1000).toFixed(0)}kbps
-                                        </span>
-                                      </div>
-                                    )}
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-600">FPS:</span>
-                                      <span className="font-medium text-black">
-                                        {codecData[user.id]?.frameRate || 'N/A'}
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-
-                                {/* Audio */}
-                                <div>
-                                  <div className="font-semibold text-green-600 mb-1 flex items-center text-xs">
-                                    <Mic className="w-3 h-3 mr-1" />
-                                    Audio
-                                  </div>
-                                  <div className="space-y-0.5">
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-600">Codec:</span>
-                                      <span className="font-medium text-black">
-                                        {codecData[user.id]?.audioCodec || 'N/A'}
-                                      </span>
-                                    </div>
-                                    <div className="flex justify-between">
-                                      <span className="text-gray-600">Sample Rate:</span>
-                                      <span className="font-medium text-black">
-                                        {codecData[user.id]?.sampleRate !== undefined
-                                          ? codecData[user.id].sampleRate === 0
-                                            ? '0'
-                                            : (codecData[user.id].sampleRate / 1000).toFixed(0) + 'k'
-                                          : 'N/A'}
-                                      </span>
-                                    </div>
-                                    {codecData[user.id]?.audioBitrate && (
-                                      <div className="flex justify-between">
-                                        <span className="text-gray-600">Bitrate:</span>
-                                        <span className="font-medium text-black">
-                                          {(codecData[user.id].audioBitrate! / 1000).toFixed(0)}kbps
-                                        </span>
-                                      </div>
-                                    )}
-                                    {codecData[user.id]?.numberOfChannels && (
-                                      <div className="flex justify-between">
-                                        <span className="text-gray-600">Channels:</span>
-                                        <span className="font-medium text-black">
-                                          {codecData[user.id].numberOfChannels}
-                                        </span>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Sync Information */}
-                            <div className="bg-gray-50 rounded p-1">
-                              <div className="font-semibold text-purple-600 mb-1 flex items-center text-xs">
-                                <Activity className="w-3 h-3 mr-1" />
-                                Sync & Buffer
-                              </div>
-                              <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
-                                <div className="flex justify-between">
-                                  <span className="text-gray-600">A/V Drift: </span>
-                                  <span className="font-semibold text-green-600">N/A</span>
-                                  {/* <span className={`font-semibold ${Math.abs(codecData[user.id]?.syncDrift || 0) > 10 ? 'text-red-600' : 'text-green-600'}`}> */}
-                                  {/* {codecData[user.id]?.syncDrift !== undefined */}
-                                  {/* ? `${codecData[user.id].syncDrift > 0 ? '+' : ''}${codecData[user.id].syncDrift}ms` */}
-                                  {/* : '0ms' */}
-                                  {/* } */}
-                                  {/* </span> */}
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-gray-600">Buffer duration:</span>
-                                  <span className="font-semibold text-green-600">N/A</span>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
             ))}
           </div>
@@ -3621,171 +3340,275 @@ function SessionPage() {
                   {/* === TAB 1: NETWORK GRAPHS === */}
                   {infoPanelType === 'network' && (
                     <>
-                      <div className="grid grid-cols-3 gap-2 mb-4">
-                        <div className="bg-white p-2 rounded border text-center shadow-sm">
-                          <div className="text-[10px] text-gray-500 font-bold">VIDEO</div>
-                          <div className="text-sm font-bold text-blue-600">
-                            {telemetryData[statsPanelUserId]?.videoBitrate?.toFixed(0) || 0}k
-                          </div>
+                      {/* Network Stats Panel */}
+                      {/* Header */}
+                      <div className="mb-2 flex-shrink-0">
+                        <h3 className="text-lg font-bold text-black leading-tight">Network Stats</h3>
+                      </div>
+
+                      {/* Legend */}
+                      <div className="grid grid-cols-3 gap-1 mb-2 flex-shrink-0">
+                        <div className="flex items-center space-x-1">
+                          <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                          <span className="text-xs font-medium text-gray-700">VIDEO</span>
                         </div>
-                        <div className="bg-white p-2 rounded border text-center shadow-sm">
-                          <div className="text-[10px] text-gray-500 font-bold">AUDIO</div>
-                          <div className="text-sm font-bold text-gray-600">
-                            {telemetryData[statsPanelUserId]?.audioBitrate?.toFixed(0) || 0}k
-                          </div>
+                        <div className="flex items-center space-x-1">
+                          <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
+                          <span className="text-xs font-medium text-gray-700">AUDIO</span>
                         </div>
-                        <div className="bg-white p-2 rounded border text-center shadow-sm">
-                          <div className="text-[10px] text-gray-500 font-bold">RTT</div>
-                          <div className="text-sm font-bold text-red-500">
-                            {telemetryData[statsPanelUserId]?.latency || 0}ms
-                          </div>
+                        <div className="flex items-center space-x-1">
+                          <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                          <span className="text-xs font-medium text-gray-700">LATENCY</span>
                         </div>
                       </div>
 
-                      <div className="bg-white rounded border p-2 h-48 relative shadow-sm">
-                        <div className="absolute inset-0 p-4">
-                          <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
-                            {/* Grid */}
-                            <line x1="0" y1="0" x2="300" y2="0" stroke="#f3f4f6" strokeWidth="1" />
-                            <line x1="0" y1="50" x2="300" y2="50" stroke="#f3f4f6" strokeWidth="1" />
-                            <line x1="0" y1="100" x2="300" y2="100" stroke="#f3f4f6" strokeWidth="1" />
-                            {/* Lines */}
-                            <polyline
-                              fill="none"
-                              stroke="#3b82f6"
-                              strokeWidth="2"
-                              points={
-                                videoBitrateHistory[statsPanelUserId]
-                                  ?.map(
-                                    (val, i) =>
-                                      `${(i / Math.max(videoBitrateHistory[statsPanelUserId].length - 1, 1)) * 300},${100 - Math.min((val / 500) * 100, 100)}`,
-                                  )
-                                  .join(' ') || ''
-                              }
-                            />
-                            <polyline
-                              fill="none"
-                              stroke="#ef4444"
-                              strokeWidth="2"
-                              points={
-                                latencyHistory[statsPanelUserId]
-                                  ?.map(
-                                    (val, i) =>
-                                      `${(i / Math.max(latencyHistory[statsPanelUserId].length - 1, 1)) * 300},${100 - Math.min((val / 200) * 100, 100)}`,
-                                  )
-                                  .join(' ') || ''
-                              }
-                            />
-                          </svg>
+                      {/* Values with smooth transitions */}
+                      <div className="grid grid-cols-3 gap-1 mb-3 flex-shrink-0">
+                        <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
+                          {telemetryData[statsPanelUserId]
+                            ? `${telemetryData[statsPanelUserId].videoBitrate.toFixed(0)} Kbit/s`
+                            : 'N/A'}
+                        </span>
+                        <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
+                          {telemetryData[statsPanelUserId]
+                            ? `${telemetryData[statsPanelUserId].audioBitrate.toFixed(0)} Kbit/s`
+                            : 'N/A'}
+                        </span>
+                        <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
+                          {!isSelf(statsPanelUserId) && telemetryData[statsPanelUserId]
+                            ? `${telemetryData[statsPanelUserId].latency}ms`
+                            : 'N/A'}
+                        </span>
+                      </div>
+
+                      {/* Network Stats Graph */}
+                      <div className="flex-1 relative min-h-0">
+                        {/* Graph container */}
+                        <div className="h-full bg-gray-50 rounded relative overflow-hidden border border-gray-200 min-h-16">
+                          {/* Left Y-axis labels (Bitrate) */}
+                          <div className="absolute left-1 top-1 text-xs text-gray-500 leading-none">500K</div>
+                          <div className="absolute left-1 top-1/2 text-xs text-gray-500 leading-none">250K</div>
+                          <div className="absolute left-1 bottom-1 text-xs text-gray-500 leading-none">0</div>
+
+                          {/* Right Y-axis labels (Latency) */}
+                          <div className="absolute right-1 top-1 text-xs text-red-500 leading-none">200ms</div>
+                          <div className="absolute right-1 top-1/2 text-xs text-red-500 leading-none">100ms</div>
+                          <div className="absolute right-1 bottom-1 text-xs text-red-500 leading-none">0ms</div>
+
+                          {/* Grid lines */}
+                          <div className="absolute inset-0 flex flex-col justify-between p-1">
+                            {[...Array(3)].map((_, i) => (
+                              <div key={i} className="border-t border-gray-300 opacity-30"></div>
+                            ))}
+                          </div>
+
+                          {/* Video bitrate line */}
+                          <div className="absolute inset-0 p-2">
+                            <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
+                              <polyline
+                                fill="none"
+                                stroke="#3b82f6"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                points={
+                                  videoBitrateHistory[statsPanelUserId] &&
+                                  videoBitrateHistory[statsPanelUserId].length > 0
+                                    ? videoBitrateHistory[statsPanelUserId]
+                                        .map((videoBitrate, index) => {
+                                          const x =
+                                            (index / Math.max(videoBitrateHistory[statsPanelUserId].length - 1, 1)) *
+                                            300
+                                          const y = 100 - Math.min((videoBitrate / 500) * 100, 100)
+                                          return `${x},${y}`
+                                        })
+                                        .join(' ')
+                                    : ''
+                                }
+                              />
+                            </svg>
+                          </div>
+
+                          {/* Audio bitrate line */}
+                          <div className="absolute inset-0 p-2">
+                            <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
+                              <polyline
+                                fill="none"
+                                stroke="#6b7280"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                points={
+                                  audioBitrateHistory[statsPanelUserId] &&
+                                  audioBitrateHistory[statsPanelUserId].length > 0
+                                    ? audioBitrateHistory[statsPanelUserId]
+                                        .map((audioBitrate, index) => {
+                                          const x =
+                                            (index / Math.max(audioBitrateHistory[statsPanelUserId].length - 1, 1)) *
+                                            300
+                                          const y = 100 - Math.min((audioBitrate / 500) * 100, 100)
+                                          return `${x},${y}`
+                                        })
+                                        .join(' ')
+                                    : ''
+                                }
+                              />
+                            </svg>
+                          </div>
+
+                          {/* Latency line */}
+                          <div className="absolute inset-0 p-2">
+                            <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
+                              <polyline
+                                fill="none"
+                                stroke="#ef4444"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                points={
+                                  !isSelf(statsPanelUserId) &&
+                                  latencyHistory[statsPanelUserId] &&
+                                  latencyHistory[statsPanelUserId].length > 0
+                                    ? latencyHistory[statsPanelUserId]
+                                        .map((latency: number, index: number) => {
+                                          const x =
+                                            (index / Math.max(latencyHistory[statsPanelUserId].length - 1, 1)) * 300
+                                          const y = 100 - Math.min((latency / 200) * 100, 100)
+                                          return `${x},${y}`
+                                        })
+                                        .join(' ')
+                                    : isSelf(statsPanelUserId)
+                                      ? '' // No line for self user
+                                      : ''
+                                }
+                              />
+                            </svg>
+                          </div>
                         </div>
                       </div>
                     </>
                   )}
 
-                  {/* === TAB 2: CODEC TEXT (YOUR RESTORED CODE) === */}
+                  {/* === TAB 2: CODEC TEXT === */}
                   {infoPanelType === 'codec' && (
-                    <div className="space-y-1 flex-1 text-xs overflow-y-auto">
-                      {/* Video & Audio Group */}
-                      <div className="bg-white border border-gray-200 rounded p-2 mb-2">
-                        <div className="grid grid-cols-2 gap-2">
-                          {/* Video Column */}
-                          <div>
-                            <div className="font-semibold text-blue-600 mb-1 flex items-center text-xs">
-                              <Video className="w-3 h-3 mr-1" />
-                              Video
-                            </div>
-                            <div className="space-y-0.5">
-                              <div className="flex justify-between">
-                                <span className="text-gray-500">Codec:</span>
-                                <span className="font-medium text-black">
-                                  {codecData[statsPanelUserId]?.videoCodec || 'N/A'}
-                                </span>
+                    <>
+                      {/* Media Info Panel */}
+                      {/* Header */}
+                      <div className="mb-2 flex-shrink-0">
+                        <h3 className="text-lg font-bold text-black leading-tight">Media Info</h3>
+                      </div>
+
+                      {/* Media Information Grid*/}
+                      <div className="space-y-1 flex-1 text-xs overflow-y-auto">
+                        {/* Video & Audio*/}
+                        <div className="bg-gray-50 rounded p-1">
+                          <div className="grid grid-cols-2 gap-2">
+                            {/* Video */}
+                            <div>
+                              <div className="font-semibold text-blue-600 mb-1 flex items-center text-xs">
+                                <Video className="w-3 h-3 mr-1" />
+                                Video
                               </div>
-                              <div className="flex justify-between">
-                                <span className="text-gray-500">Res:</span>
-                                <span className="font-medium text-black">
-                                  {codecData[statsPanelUserId]?.resolution || 'N/A'}
-                                </span>
-                              </div>
-                              {codecData[statsPanelUserId]?.videoBitrate && (
+                              <div className="space-y-0.5">
                                 <div className="flex justify-between">
-                                  <span className="text-gray-500">Bitrate:</span>
+                                  <span className="text-gray-600">Codec:</span>
                                   <span className="font-medium text-black">
-                                    {(codecData[statsPanelUserId].videoBitrate! / 1000).toFixed(0)}kbps
+                                    {codecData[statsPanelUserId]?.videoCodec || 'N/A'}
                                   </span>
                                 </div>
-                              )}
-                              <div className="flex justify-between">
-                                <span className="text-gray-500">FPS:</span>
-                                <span className="font-medium text-black">
-                                  {codecData[statsPanelUserId]?.frameRate || 'N/A'}
-                                </span>
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">Resolution:</span>
+                                  <span className="font-medium text-black">
+                                    {codecData[statsPanelUserId]?.resolution || 'N/A'}
+                                  </span>
+                                </div>
+
+                                {codecData[statsPanelUserId]?.videoBitrate && (
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Bitrate:</span>
+                                    <span className="font-medium text-black">
+                                      {(codecData[statsPanelUserId].videoBitrate! / 1000).toFixed(0)}kbps
+                                    </span>
+                                  </div>
+                                )}
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">FPS:</span>
+                                  <span className="font-medium text-black">
+                                    {codecData[statsPanelUserId]?.frameRate || 'N/A'}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Audio */}
+                            <div>
+                              <div className="font-semibold text-green-600 mb-1 flex items-center text-xs">
+                                <Mic className="w-3 h-3 mr-1" />
+                                Audio
+                              </div>
+                              <div className="space-y-0.5">
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">Codec:</span>
+                                  <span className="font-medium text-black">
+                                    {codecData[statsPanelUserId]?.audioCodec || 'N/A'}
+                                  </span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">Sample Rate:</span>
+                                  <span className="font-medium text-black">
+                                    {codecData[statsPanelUserId]?.sampleRate !== undefined
+                                      ? codecData[statsPanelUserId].sampleRate === 0
+                                        ? '0'
+                                        : (codecData[statsPanelUserId].sampleRate / 1000).toFixed(0) + 'k'
+                                      : 'N/A'}
+                                  </span>
+                                </div>
+                                {codecData[statsPanelUserId]?.audioBitrate && (
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Bitrate:</span>
+                                    <span className="font-medium text-black">
+                                      {(codecData[statsPanelUserId].audioBitrate! / 1000).toFixed(0)}kbps
+                                    </span>
+                                  </div>
+                                )}
+                                {codecData[statsPanelUserId]?.numberOfChannels && (
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-600">Channels:</span>
+                                    <span className="font-medium text-black">
+                                      {codecData[statsPanelUserId].numberOfChannels}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>
+                        </div>
 
-                          {/* Audio Column */}
-                          <div>
-                            <div className="font-semibold text-green-600 mb-1 flex items-center text-xs">
-                              <Mic className="w-3 h-3 mr-1" />
-                              Audio
+                        {/* Sync Information */}
+                        <div className="bg-gray-50 rounded p-1">
+                          <div className="font-semibold text-purple-600 mb-1 flex items-center text-xs">
+                            <Activity className="w-3 h-3 mr-1" />
+                            Sync & Buffer
+                          </div>
+                          <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">A/V Drift: </span>
+                              <span className="font-semibold text-green-600">N/A</span>
+                              {/* <span className={`font-semibold ${Math.abs(codecData[user.id]?.syncDrift || 0) > 10 ? 'text-red-600' : 'text-green-600'}`}> */}
+                              {/* {codecData[user.id]?.syncDrift !== undefined */}
+                              {/* ? `${codecData[user.id].syncDrift > 0 ? '+' : ''}${codecData[user.id].syncDrift}ms` */}
+                              {/* : '0ms' */}
+                              {/* } */}
+                              {/* </span> */}
                             </div>
-                            <div className="space-y-0.5">
-                              <div className="flex justify-between">
-                                <span className="text-gray-500">Codec:</span>
-                                <span className="font-medium text-black">
-                                  {codecData[statsPanelUserId]?.audioCodec || 'N/A'}
-                                </span>
-                              </div>
-                              <div className="flex justify-between">
-                                <span className="text-gray-500">Hz:</span>
-                                <span className="font-medium text-black">
-                                  {codecData[statsPanelUserId]?.sampleRate !== undefined
-                                    ? codecData[statsPanelUserId].sampleRate === 0
-                                      ? '0'
-                                      : (codecData[statsPanelUserId].sampleRate / 1000).toFixed(0) + 'k'
-                                    : 'N/A'}
-                                </span>
-                              </div>
-                              {codecData[statsPanelUserId]?.audioBitrate && (
-                                <div className="flex justify-between">
-                                  <span className="text-gray-500">Bitrate:</span>
-                                  <span className="font-medium text-black">
-                                    {(codecData[statsPanelUserId].audioBitrate! / 1000).toFixed(0)}kbps
-                                  </span>
-                                </div>
-                              )}
-                              {codecData[statsPanelUserId]?.numberOfChannels && (
-                                <div className="flex justify-between">
-                                  <span className="text-gray-500">Ch:</span>
-                                  <span className="font-medium text-black">
-                                    {codecData[statsPanelUserId].numberOfChannels}
-                                  </span>
-                                </div>
-                              )}
+                            <div className="flex justify-between">
+                              <span className="text-gray-600">Buffer duration:</span>
+                              <span className="font-semibold text-green-600">N/A</span>
                             </div>
                           </div>
                         </div>
                       </div>
-
-                      {/* Sync Information */}
-                      <div className="bg-white border border-gray-200 rounded p-2">
-                        <div className="font-semibold text-purple-600 mb-1 flex items-center text-xs">
-                          <Activity className="w-3 h-3 mr-1" />
-                          Sync & Buffer
-                        </div>
-                        <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">A/V Drift: </span>
-                            <span className="font-semibold text-green-600">N/A</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-500">Buffer:</span>
-                            <span className="font-semibold text-green-600">N/A</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                    </>
                   )}
                 </div>
               </div>
