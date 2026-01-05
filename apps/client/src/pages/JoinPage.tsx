@@ -338,21 +338,23 @@ export default function JoinPage() {
             {hasCriticalMissing ? 'Browser Not Compatible - Check Wiki' : connecting ? 'Connecting...' : 'Join'}
           </button>
         </form>
-        <div className="notice">   
-              Session duration in each room is limited to {roomLimits.sessionDurationMinutes} minute
-              {roomLimits.sessionDurationMinutes !== 1 ? 's' : ''} and session size is limited to{' '}
-              {roomLimits.maxUsersPerRoom} participants.
-            {commitHash && (
-                Commit:{' '}
-                <a
-                  href={`https://github.com/moqtail/demo-timetravel/commit/${commitHash}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="github-link"
-                >
-                  {commitHash}
-                </a>
-            )}
+        <div className="notice">
+          Session duration in each room is limited to {roomLimits.sessionDurationMinutes} minute
+          {roomLimits.sessionDurationMinutes !== 1 ? 's' : ''} and session size is limited to{' '}
+          {roomLimits.maxUsersPerRoom} participants.
+          {commitHash && (
+            <>
+              Commit:{' '}
+              <a
+                href={`https://github.com/moqtail/demo-timetravel/commit/${commitHash}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="github-link"
+              >
+                {commitHash}
+              </a>
+            </>
+          )}
         </div>
         {error && <div className="error-message">{error}</div>}
       </div>

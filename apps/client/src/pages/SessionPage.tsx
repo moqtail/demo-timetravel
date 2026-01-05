@@ -105,10 +105,20 @@ function SessionPage() {
   }>({})
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [telemetryData, setTelemetryData] = useState<{
-    [userId: string]: { latency: number; videoBitrate: number; audioBitrate: number }
+    [userId: string]: {
+      videoLatency: number
+      audioLatency: number
+      screenshareLatency: number
+      videoBitrate: number
+      audioBitrate: number
+    }
   }>({})
-  const telemetryInstances = useRef<{ [userId: string]: { video: NetworkTelemetry; audio: NetworkTelemetry } }>({})
-  const [latencyHistory, setLatencyHistory] = useState<{ [userId: string]: number[] }>({})
+  const telemetryInstances = useRef<{
+    [userId: string]: { video: NetworkTelemetry; audio: NetworkTelemetry; screenshare: NetworkTelemetry }
+  }>({})
+  const [videoLatencyHistory, setVideoLatencyHistory] = useState<{ [userId: string]: number[] }>({})
+  const [audioLatencyHistory, setAudioLatencyHistory] = useState<{ [userId: string]: number[] }>({})
+  const [screenshareLatencyHistory, setScreenshareLatencyHistory] = useState<{ [userId: string]: number[] }>({})
   const [videoBitrateHistory, setVideoBitrateHistory] = useState<{ [userId: string]: number[] }>({})
   const [audioBitrateHistory, setAudioBitrateHistory] = useState<{ [userId: string]: number[] }>({})
   const [timeRemaining, setTimeRemaining] = useState<string>('--:--')
@@ -1586,7 +1596,17 @@ function SessionPage() {
         return updated
       })
 
-      setLatencyHistory((prev) => {
+      setVideoLatencyHistory((prev) => {
+        const newHistory = { ...prev }
+        delete newHistory[msg.userId]
+        return newHistory
+      })
+      setAudioLatencyHistory((prev) => {
+        const newHistory = { ...prev }
+        delete newHistory[msg.userId]
+        return newHistory
+      })
+      setScreenshareLatencyHistory((prev) => {
         const newHistory = { ...prev }
         delete newHistory[msg.userId]
         return newHistory
@@ -1673,6 +1693,7 @@ function SessionPage() {
       telemetryInstances.current[userId] = {
         video: new NetworkTelemetry(1000), // 1 second window
         audio: new NetworkTelemetry(1000), // 1 second window
+        screenshare: new NetworkTelemetry(1000), // 1 second window
       }
 
       setCodecData((prev) => ({
@@ -1735,39 +1756,71 @@ function SessionPage() {
     }
   }
 
-  const previousValues = useRef<{ [userId: string]: { latency: number; videoBitrate: number; audioBitrate: number } }>(
-    {},
-  )
+  const previousValues = useRef<{
+    [userId: string]: {
+      videoLatency: number
+      audioLatency: number
+      screenshareLatency: number
+      videoBitrate: number
+      audioBitrate: number
+    }
+  }>({})
 
   // Update every 100ms
   useEffect(() => {
     const interval = setInterval(() => {
-      const newTelemetryData: { [userId: string]: { latency: number; videoBitrate: number; audioBitrate: number } } = {}
+      const newTelemetryData: {
+        [userId: string]: {
+          videoLatency: number
+          audioLatency: number
+          screenshareLatency: number
+          videoBitrate: number
+          audioBitrate: number
+        }
+      } = {}
 
       Object.keys(telemetryInstances.current).forEach((userId) => {
         const telemetry = telemetryInstances.current[userId]
         if (telemetry) {
           const videoLatency = isSelf(userId) ? 0 : Math.round(telemetry.video.latency)
           const audioLatency = isSelf(userId) ? 0 : Math.round(telemetry.audio.latency)
+          const screenshareLatency = isSelf(userId) ? 0 : Math.round(telemetry.screenshare.latency)
           const videoBitrate = (telemetry.video.throughput * 8) / 1000 // bytes/s to Kbps
           const audioBitrate = (telemetry.audio.throughput * 8) / 1000 // bytes/s to Kbps
 
-          const user = users[userId]
-          const shouldUseAudioLatency = user?.hasAudio && (!user?.hasVideo || audioLatency > 0)
-          const displayLatency = shouldUseAudioLatency ? audioLatency : videoLatency
-          //console.log(`Telemetry for user ${userId}: videoLatency=${videoLatency}, audioLatency=${audioLatency}, displayLatency=${displayLatency}, hasVideo=${user?.hasVideo}, hasAudio=${user?.hasAudio}, shouldUseAudioLatency=${shouldUseAudioLatency}`)
-
           newTelemetryData[userId] = {
-            latency: displayLatency,
+            videoLatency,
+            audioLatency,
+            screenshareLatency,
             videoBitrate: Math.max(0, videoBitrate),
             audioBitrate: Math.max(0, audioBitrate),
           }
 
-          // Latency history (last 30 points)
+          // Video Latency history (last 30 points)
           if (!isSelf(userId)) {
-            setLatencyHistory((prevLatency) => {
+            setVideoLatencyHistory((prevLatency) => {
               const userHistory = prevLatency[userId] || []
-              const newHistory = [...userHistory, displayLatency].slice(-30)
+              const newHistory = [...userHistory, videoLatency].slice(-30)
+              return {
+                ...prevLatency,
+                [userId]: newHistory,
+              }
+            })
+
+            // Audio Latency history (last 30 points)
+            setAudioLatencyHistory((prevLatency) => {
+              const userHistory = prevLatency[userId] || []
+              const newHistory = [...userHistory, audioLatency].slice(-30)
+              return {
+                ...prevLatency,
+                [userId]: newHistory,
+              }
+            })
+
+            // Screenshare Latency history (last 30 points)
+            setScreenshareLatencyHistory((prevLatency) => {
+              const userHistory = prevLatency[userId] || []
+              const newHistory = [...userHistory, screenshareLatency].slice(-30)
               return {
                 ...prevLatency,
                 [userId]: newHistory,
@@ -2314,7 +2367,7 @@ function SessionPage() {
           screenshareCanvasRef,
           screenshareTrackAlias,
           screenshareFullTrackName,
-          userTelemetry.video,
+          userTelemetry.screenshare,
         )()
 
         if (screenshareResult && screenshareResult.videoRequestId) {
@@ -3040,8 +3093,8 @@ function SessionPage() {
                       {telemetryData[user.id] &&
                         !isSelf(user.id) && ( // TODO: Calculate throughputs for self user
                           <div className="hidden md:block text-xs text-gray-300 mt-1">
-                            {telemetryData[user.id].latency}ms | {telemetryData[user.id].videoBitrate.toFixed(0)}Kbit/s
-                            | {telemetryData[user.id].audioBitrate.toFixed(0)}Kbit/s
+                            {telemetryData[user.id].videoLatency}ms | {telemetryData[user.id].videoBitrate.toFixed(0)}
+                            Kbit/s | {telemetryData[user.id].audioBitrate.toFixed(0)}Kbit/s
                           </div>
                         )}
                     </div>
@@ -3223,39 +3276,88 @@ function SessionPage() {
                             <h3 className="text-lg font-bold text-black leading-tight">Network Stats</h3>
                           </div>
 
-                          {/* Legend */}
-                          <div className="grid grid-cols-3 gap-1 mb-2 flex-shrink-0">
-                            <div className="flex items-center space-x-1">
-                              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                              <span className="text-xs font-medium text-gray-700">VIDEO</span>
+                          {/* Metrics Grid */}
+                          <div className="grid grid-cols-2 gap-3 mb-3 flex-shrink-0">
+                            {/* Bitrate Section */}
+                            <div>
+                              <h4 className="text-xs font-semibold text-gray-600 mb-1.5">Bitrate</h4>
+                              <div className="space-y-1.5">
+                                {/* Video Bitrate */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                    <span className="text-xs font-medium text-gray-700">VIDEO</span>
+                                  </div>
+                                  <span className="text-xs font-bold text-black">
+                                    {telemetryData[user.id]
+                                      ? `${telemetryData[user.id].videoBitrate.toFixed(0)} Kbit/s`
+                                      : 'N/A'}
+                                  </span>
+                                </div>
+                                {/* Audio Bitrate */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
+                                    <span className="text-xs font-medium text-gray-700">AUDIO</span>
+                                  </div>
+                                  <span className="text-xs font-bold text-black">
+                                    {telemetryData[user.id]
+                                      ? `${telemetryData[user.id].audioBitrate.toFixed(0)} Kbit/s`
+                                      : 'N/A'}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
-                            <div className="flex items-center space-x-1">
-                              <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
-                              <span className="text-xs font-medium text-gray-700">AUDIO</span>
-                            </div>
-                            <div className="flex items-center space-x-1">
-                              <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                              <span className="text-xs font-medium text-gray-700">LATENCY</span>
-                            </div>
-                          </div>
 
-                          {/* Values with smooth transitions */}
-                          <div className="grid grid-cols-3 gap-1 mb-3 flex-shrink-0">
-                            <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
-                              {telemetryData[user.id]
-                                ? `${telemetryData[user.id].videoBitrate.toFixed(0)} Kbit/s`
-                                : 'N/A'}
-                            </span>
-                            <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
-                              {telemetryData[user.id]
-                                ? `${telemetryData[user.id].audioBitrate.toFixed(0)} Kbit/s`
-                                : 'N/A'}
-                            </span>
-                            <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
-                              {!isSelf(user.id) && telemetryData[user.id]
-                                ? `${telemetryData[user.id].latency}ms`
-                                : 'N/A'}
-                            </span>
+                            {/* Latency Section */}
+                            <div>
+                              <h4 className="text-xs font-semibold text-gray-600 mb-1.5">Latency</h4>
+                              <div className="space-y-1.5">
+                                {/* Video Latency */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                                    <span className="text-xs font-medium text-gray-700">VIDEO</span>
+                                  </div>
+                                  <span className="text-xs font-bold text-black">
+                                    {!isSelf(user.id) &&
+                                    telemetryData[user.id] &&
+                                    (userSubscriptions[user.id]?.videoSubscribed ||
+                                      userSubscriptions[user.id]?.videoHDSubscribed)
+                                      ? `${telemetryData[user.id].videoLatency}ms`
+                                      : 'N/A'}
+                                  </span>
+                                </div>
+                                {/* Audio Latency */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+                                    <span className="text-xs font-medium text-gray-700">AUDIO</span>
+                                  </div>
+                                  <span className="text-xs font-bold text-black">
+                                    {!isSelf(user.id) &&
+                                    telemetryData[user.id] &&
+                                    userSubscriptions[user.id]?.audioSubscribed
+                                      ? `${telemetryData[user.id].audioLatency}ms`
+                                      : 'N/A'}
+                                  </span>
+                                </div>
+                                {/* Screenshare Latency */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                                    <span className="text-xs font-medium text-gray-700">SCREEN</span>
+                                  </div>
+                                  <span className="text-xs font-bold text-black">
+                                    {!isSelf(user.id) &&
+                                    telemetryData[user.id] &&
+                                    userSubscriptions[user.id]?.screenshareSubscribed
+                                      ? `${telemetryData[user.id].screenshareLatency}ms`
+                                      : 'N/A'}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
                           </div>
 
                           {/* Network Stats Graph */}
@@ -3263,13 +3365,13 @@ function SessionPage() {
                             {/* Graph container */}
                             <div className="h-full bg-gray-50 rounded relative overflow-hidden border border-gray-200 min-h-16">
                               {/* Left Y-axis labels (Bitrate) */}
-                              <div className="absolute left-1 top-1 text-xs text-gray-500 leading-none">500K</div>
-                              <div className="absolute left-1 top-1/2 text-xs text-gray-500 leading-none">250K</div>
+                              <div className="absolute left-1 top-1 text-xs text-gray-500 leading-none">1500K</div>
+                              <div className="absolute left-1 top-1/2 text-xs text-gray-500 leading-none">750K</div>
                               <div className="absolute left-1 bottom-1 text-xs text-gray-500 leading-none">0</div>
 
                               {/* Right Y-axis labels (Latency) */}
-                              <div className="absolute right-1 top-1 text-xs text-red-500 leading-none">200ms</div>
-                              <div className="absolute right-1 top-1/2 text-xs text-red-500 leading-none">100ms</div>
+                              <div className="absolute right-1 top-1 text-xs text-red-500 leading-none">600ms</div>
+                              <div className="absolute right-1 top-1/2 text-xs text-red-500 leading-none">300ms</div>
                               <div className="absolute right-1 bottom-1 text-xs text-red-500 leading-none">0ms</div>
 
                               {/* Grid lines */}
@@ -3294,7 +3396,7 @@ function SessionPage() {
                                             .map((videoBitrate, index) => {
                                               const x =
                                                 (index / Math.max(videoBitrateHistory[user.id].length - 1, 1)) * 300
-                                              const y = 100 - Math.min((videoBitrate / 500) * 100, 100)
+                                              const y = 100 - Math.min((videoBitrate / 1500) * 100, 100)
                                               return `${x},${y}`
                                             })
                                             .join(' ')
@@ -3319,7 +3421,7 @@ function SessionPage() {
                                             .map((audioBitrate, index) => {
                                               const x =
                                                 (index / Math.max(audioBitrateHistory[user.id].length - 1, 1)) * 300
-                                              const y = 100 - Math.min((audioBitrate / 500) * 100, 100)
+                                              const y = 100 - Math.min((audioBitrate / 1500) * 100, 100)
                                               return `${x},${y}`
                                             })
                                             .join(' ')
@@ -3329,7 +3431,7 @@ function SessionPage() {
                                 </svg>
                               </div>
 
-                              {/* Latency line */}
+                              {/* Video Latency line */}
                               <div className="absolute inset-0 p-2">
                                 <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
                                   <polyline
@@ -3339,17 +3441,73 @@ function SessionPage() {
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                     points={
-                                      !isSelf(user.id) && latencyHistory[user.id] && latencyHistory[user.id].length > 0
-                                        ? latencyHistory[user.id]
+                                      !isSelf(user.id) &&
+                                      videoLatencyHistory[user.id] &&
+                                      videoLatencyHistory[user.id].length > 0
+                                        ? videoLatencyHistory[user.id]
                                             .map((latency: number, index: number) => {
-                                              const x = (index / Math.max(latencyHistory[user.id].length - 1, 1)) * 300
-                                              const y = 100 - Math.min((latency / 200) * 100, 100)
+                                              const x =
+                                                (index / Math.max(videoLatencyHistory[user.id].length - 1, 1)) * 300
+                                              const y = 100 - Math.min((latency / 600) * 100, 100)
                                               return `${x},${y}`
                                             })
                                             .join(' ')
-                                        : isSelf(user.id)
-                                          ? '' // No line for self user
-                                          : ''
+                                        : ''
+                                    }
+                                  />
+                                </svg>
+                              </div>
+
+                              {/* Audio Latency line */}
+                              <div className="absolute inset-0 p-2">
+                                <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
+                                  <polyline
+                                    fill="none"
+                                    stroke="#f97316"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    points={
+                                      !isSelf(user.id) &&
+                                      audioLatencyHistory[user.id] &&
+                                      audioLatencyHistory[user.id].length > 0
+                                        ? audioLatencyHistory[user.id]
+                                            .map((latency: number, index: number) => {
+                                              const x =
+                                                (index / Math.max(audioLatencyHistory[user.id].length - 1, 1)) * 300
+                                              const y = 100 - Math.min((latency / 600) * 100, 100)
+                                              return `${x},${y}`
+                                            })
+                                            .join(' ')
+                                        : ''
+                                    }
+                                  />
+                                </svg>
+                              </div>
+
+                              {/* Screenshare Latency line */}
+                              <div className="absolute inset-0 p-2">
+                                <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
+                                  <polyline
+                                    fill="none"
+                                    stroke="#a855f7"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    points={
+                                      !isSelf(user.id) &&
+                                      screenshareLatencyHistory[user.id] &&
+                                      screenshareLatencyHistory[user.id].length > 0
+                                        ? screenshareLatencyHistory[user.id]
+                                            .map((latency: number, index: number) => {
+                                              const x =
+                                                (index / Math.max(screenshareLatencyHistory[user.id].length - 1, 1)) *
+                                                300
+                                              const y = 100 - Math.min((latency / 600) * 100, 100)
+                                              return `${x},${y}`
+                                            })
+                                            .join(' ')
+                                        : ''
                                     }
                                   />
                                 </svg>
