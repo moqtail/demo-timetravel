@@ -18,6 +18,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import JoinPage from './pages/JoinPage'
 import SessionPage from './pages/SessionPage'
 import Arch from './pages/Arch'
+import Telemetry from './pages/Telemetry'
 import { SessionProvider } from './contexts/SessionContext'
 import { SocketProvider } from './sockets/SocketContext'
 
@@ -30,6 +31,7 @@ export default function App() {
             <Route path="/" element={<JoinPage />} />
             <Route path="/session" element={<SessionPage />} />
             <Route path="/arch" element={<Arch />} />
+            <Route path="/telemetry" element={<Telemetry />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         </BrowserRouter>
