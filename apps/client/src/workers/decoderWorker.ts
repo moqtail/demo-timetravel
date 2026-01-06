@@ -59,7 +59,7 @@ self.onmessage = async (e) => {
 
   if (type === 'resize') {
     if (ctx && newWidth && newHeight) {
-      console.log(`[DECODER] Resizing canvas to ${newWidth}x${newHeight}`)
+      //console.debug(`[DECODER] Resizing canvas to ${newWidth}x${newHeight}`)
       targetResolution = { width: newWidth, height: newHeight }
       ctx.canvas.width = newWidth
       ctx.canvas.height = newHeight
@@ -77,13 +77,13 @@ self.onmessage = async (e) => {
   }
 
   if (type === 'init-audio-only') {
-    // console.log('[DECODER] Initializing audio-only mode')
+    // console.debug('[DECODER] Initializing audio-only mode')
     theDecoderConfig = decoderConfig || null
     return
   }
 
   if (type === 'reset') {
-    // console.log('[DECODER] Resetting decoders at', new Date().toISOString())
+    // console.debug('[DECODER] Resetting decoders at', new Date().toISOString())
     waitingForKeyframe = true
     if (frameTimeoutId) {
       clearTimeout(frameTimeoutId)
@@ -108,7 +108,7 @@ self.onmessage = async (e) => {
   }
 
   if (type === 'updateDecoderConfig') {
-    console.log('[DECODER] Updating decoder config')
+    //console.debug('[DECODER] Updating decoder config')
     theDecoderConfig = decoderConfig || null
 
     // Close the current decoder
@@ -118,7 +118,7 @@ self.onmessage = async (e) => {
         videoDecoder.close()
         videoDecoder = null
         waitingForKeyframe = true
-        console.log('[DECODER] Video decoder closed for new config, will recreate on next keyframe')
+        //console.debug('[DECODER] Video decoder closed for new config, will recreate on next keyframe')
       } catch (e) {
         console.error('[DECODER] Error closing video decoder for config update:', e)
       }
@@ -132,7 +132,7 @@ self.onmessage = async (e) => {
 
     moqObjectCount++
     if (moqObjectCount % 50 === 0) {
-      // console.log(`[WORKER] Received ${moqObjectCount} MoQ objects`)
+      // console.debug(`[WORKER] Received ${moqObjectCount} MoQ objects`)
     }
 
     //console.debug('[WORKER]Received the payload:', moqtObj)
@@ -150,7 +150,7 @@ self.onmessage = async (e) => {
     }, currentFrameTimeoutMs) // Use our persistent timeout value
 
     if ((configHeader || isKey) && !videoDecoder && theDecoderConfig) {
-      // console.log('[DECODER] Creating new video decoder at', new Date().toISOString())
+      // console.debug('[DECODER] Creating new video decoder at', new Date().toISOString())
       videoDecoder = new VideoDecoder({
         output: handleFrame,
         error: (error) => {
@@ -159,7 +159,7 @@ self.onmessage = async (e) => {
       })
 
       const videoDecoderConfig = theDecoderConfig
-      // console.log('Using video decoder config:', videoDecoderConfig)
+      // console.debug('Using video decoder config:', videoDecoderConfig)
       if (configHeader?.config) {
         videoDecoderConfig.description = configHeader.config
       }
@@ -193,9 +193,7 @@ self.onmessage = async (e) => {
 
       const now = performance.now()
       if (now - lastLogTime > 10000) {
-        console.log(
-          `[DECODER] Video health check: ${videoFrameCount} frames processed, queue size: ${videoDecoder.decodeQueueSize}, state: ${videoDecoder.state}`,
-        )
+        //console.debug(`[DECODER] Video health check: ${videoFrameCount} frames processed, queue size: ${videoDecoder.decodeQueueSize}, state: ${videoDecoder.state}`,)
         lastLogTime = now
       }
     } catch (decodeError) {
@@ -222,7 +220,7 @@ self.onmessage = async (e) => {
     const timestamp = Number(headers.find((h) => ExtensionHeader.isCaptureTimestamp(h))?.timestamp ?? 0n)
 
     if (!audioDecoder) {
-      // console.log('[DECODER] Creating new audio decoder at', new Date().toISOString())
+      // console.debug('[DECODER] Creating new audio decoder at', new Date().toISOString())
       audioDecoder = new AudioDecoder({
         output: (frame) => {
           const pcm = new Float32Array(frame.numberOfFrames * frame.numberOfChannels)
@@ -250,13 +248,6 @@ self.onmessage = async (e) => {
     try {
       audioDecoder.decode(chunk)
       audioFrameCount++
-
-      // Log audio health less frequently (every 1000 frames)
-      if (audioFrameCount % 1000 === 0) {
-        console.log(
-          `[DECODER] Audio health: ${audioFrameCount} frames, queue: ${audioDecoder.decodeQueueSize}, state: ${audioDecoder.state}`,
-        )
-      }
     } catch (decodeError) {
       console.error('[DECODER] Audio decode error:', decodeError, 'at', new Date().toISOString())
     }

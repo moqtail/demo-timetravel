@@ -170,7 +170,6 @@ export default function JoinPage() {
           }
         }
       } catch (error) {
-        console.error('Failed to fetch room limits:', error)
         // Keep default values on error
       }
     }
@@ -194,7 +193,7 @@ export default function JoinPage() {
         response.rewindFetchGroupSize,
         hasMediaStreamTrackProcessorMissing,
       )
-      console.log(
+      console.debug(
         'Navigating to /session',
         response.roomState,
         'Duration:',

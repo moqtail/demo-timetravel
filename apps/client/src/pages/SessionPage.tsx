@@ -74,6 +74,7 @@ import { MOQtailClient } from 'moqtail-ts/client'
 import { NetworkTelemetry, ClockNormalizer } from 'moqtail-ts/util'
 import { RewindPlayer } from './RewindPlayer'
 import { BufferedMoqtObject } from '@/composables/rewindBuffer'
+import { TestMetricsManager } from '@/util/testMetrics'
 
 function SessionPage() {
   // initialize the MOQTail client
@@ -218,6 +219,10 @@ function SessionPage() {
     null,
   )
   const [pendingHDRequests, setPendingHDRequests] = useState<Set<string>>(new Set())
+
+  // Test Metrics Manager
+  const testMetricsManagerRef = useRef<TestMetricsManager>(new TestMetricsManager())
+
   useEffect(() => {
     userVideoQualitiesRef.current = userVideoQualities
   }, [userVideoQualities])
@@ -338,11 +343,17 @@ function SessionPage() {
   // Rewind functionality
   const handleOpenRewindPlayer = async (userId: string) => {
     if (isFetching) {
-      console.log('Already fetching rewind data, please wait...')
+      console.debug('Already fetching rewind data, please wait...')
       return
     }
 
-    console.log('Fetching rewind data for user:', userId)
+    // Track rewind button pressed
+    const user = users[userId]
+    if (user) {
+      testMetricsManagerRef.current.trackRewindButtonPressed(userId)
+    }
+
+    console.debug('Fetching rewind data for user:', userId)
     setIsFetching(true)
 
     try {
@@ -356,7 +367,7 @@ function SessionPage() {
 
       // Fetch video track
       const videoTrackName = getTrackname(roomState.name, userId, 'video')
-      console.log('Fetching video track:', videoTrackName.toString())
+      console.debug('Fetching video track:', videoTrackName.toString())
 
       /*
       const videoResult = await moqClient.fetch({
@@ -374,13 +385,13 @@ function SessionPage() {
       */
       // get request id from the video track subscription. If the viewer is HD-subscribed
       // and no SD request id exists, create a temporary SD subscription (no canvas/worker)
-      console.log('userSubscriptions', userSubscriptions)
+      console.debug('userSubscriptions', userSubscriptions)
       let videoRequestId = userSubscriptions[userId]?.videoRequestId
 
       const isHDSubscribed = !!userSubscriptions[userId]?.videoHDSubscribed
 
       if (videoRequestId === undefined && isHDSubscribed) {
-        console.log('No SD request id while HD subscribed - creating temporary SD subscription for rewind')
+        console.debug('No SD request id while HD subscribed - creating temporary SD subscription for rewind')
         // create a silent SD subscription using subscribeOnlyVideo
         const canvasRef = remoteCanvasRefs[userId]
         if (!roomState) {
@@ -421,9 +432,9 @@ function SessionPage() {
         return
       }
 
-      console.log('SessionPage: About to fetch video with joiningRequestId:', videoRequestId)
-      console.log('SessionPage: Using rewind fetch group size:', rewindFetchGroupSize)
-      console.log(
+      console.debug('SessionPage: About to fetch video with joiningRequestId:', videoRequestId)
+      console.debug('SessionPage: Using rewind fetch group size:', rewindFetchGroupSize)
+      console.debug(
         'SessionPage: All moqClient requestIds before video fetch:',
         moqClient ? Array.from(moqClient.requests.keys()) : 'no client',
       )
@@ -441,7 +452,7 @@ function SessionPage() {
 
       if (!(videoResult instanceof FetchError)) {
         const reader = videoResult.stream.getReader()
-        console.log('Reading video objects from fetch stream...')
+        console.debug('Reading video objects from fetch stream...')
 
         try {
           while (true) {
@@ -454,7 +465,7 @@ function SessionPage() {
                 timestamp: Date.now(),
                 type: 'video',
               })
-              console.log('Fetched video object:', {
+              console.debug('Fetched video object:', {
                 group: value.location.group.toString(),
                 object: value.location.object.toString(),
                 payloadSize: value.payload.length,
@@ -468,9 +479,9 @@ function SessionPage() {
         console.warn('Video fetch failed or returned error:', videoResult)
       }
 
-      console.log('Skipping audio fetch to avoid AV sync issues during demo')
+      console.debug('Skipping audio fetch to avoid AV sync issues during demo')
 
-      console.log(`Fetch complete for user ${userId}: ${videoObjects.length} video objects (audio skipped for demo)`)
+      console.debug(`Fetch complete for user ${userId}: ${videoObjects.length} video objects (audio skipped for demo)`)
 
       setFetchedRewindData((prev) => ({
         ...prev,
@@ -480,6 +491,12 @@ function SessionPage() {
       if (videoObjects.length > 0) {
         setSelectedRewindUserId(userId)
         setIsRewindPlayerOpen(true)
+
+        // Auto-start playback after a short delay to ensure player is initialized
+        setTimeout(() => {
+          console.debug('Auto-starting rewind playback')
+          // The RewindPlayer will handle auto-start via a new prop
+        }, 250)
       } else {
         console.warn('No video data available for user:', userId)
       }
@@ -491,7 +508,7 @@ function SessionPage() {
   }
 
   const handleCloseRewindPlayer = () => {
-    console.log('SessionPage: Closing rewind player')
+    console.debug('SessionPage: Closing rewind player')
     isRewindCleaningUp.current = true
 
     // Clear the fetched rewind data for the selected user
@@ -499,7 +516,7 @@ function SessionPage() {
       setFetchedRewindData((prev) => {
         const updated = { ...prev }
         delete updated[selectedRewindUserId]
-        console.log(`Cleared fetched rewind data for user: ${selectedRewindUserId}`)
+        console.debug(`Cleared fetched rewind data for user: ${selectedRewindUserId}`)
         return updated
       })
     }
@@ -510,7 +527,7 @@ function SessionPage() {
     // If we created a temporary SD subscription for this user, clean it up now
     const tempSub = tempSDSubscriptionsRef.current[selectedRewindUserId]
     if (tempSub) {
-      console.log('Cleaning up temporary SD subscription for', selectedRewindUserId)
+      console.debug('Cleaning up temporary SD subscription for', selectedRewindUserId)
       tempSub.cleanup()
       delete tempSDSubscriptionsRef.current[selectedRewindUserId]
       // Clear subscription state if it was only temporary
@@ -529,7 +546,7 @@ function SessionPage() {
 
     // Add a delay to ensure rewind player cleanup is complete
     setTimeout(() => {
-      console.log('SessionPage: Rewind player cleanup complete')
+      console.debug('SessionPage: Rewind player cleanup complete')
       isRewindCleaningUp.current = false
     }, 500)
   }
@@ -608,7 +625,7 @@ function SessionPage() {
   const handleToggle = (kind: 'mic' | 'cam') => {
     // Don't allow toggles while rewind player is cleaning up
     if (isRewindCleaningUp.current) {
-      console.log('Rewind player is cleaning up, ignoring toggle request')
+      console.debug('Rewind player is cleaning up, ignoring toggle request')
       return
     }
 
@@ -756,17 +773,21 @@ function SessionPage() {
       return
     }
 
-    console.log(`Transitioning ${targetUserId} from ${currentQuality} to ${newQuality}`)
+    console.debug(`Transitioning ${targetUserId} from ${currentQuality} to ${newQuality}`)
     manualQualityTransitionsRef.current.add(targetUserId)
+
+    // Track quality toggle start
+    const direction = currentQuality === 'HD' && newQuality === 'SD' ? 'HD->SD' : 'SD->HD'
+    testMetricsManagerRef.current.trackQualityToggleStart(targetUserId, direction)
 
     try {
       if (currentQuality === 'HD' && newQuality === 'SD') {
-        console.log('Unsubscribing from HD video')
+        console.debug('Unsubscribing from HD video')
         hdSubscriptionAttemptsRef.current.delete(targetUserId)
         await unsubscribeFromHDVideo(targetUserId)
         await new Promise((resolve) => setTimeout(resolve, 500))
       } else if (currentQuality === 'SD' && newQuality === 'HD') {
-        console.log('Unsubscribing from SD video')
+        console.debug('Unsubscribing from SD video')
         hdSubscriptionAttemptsRef.current.delete(targetUserId)
         await unsubscribeFromUser(targetUserId, 'video')
         await new Promise((resolve) => setTimeout(resolve, 500))
@@ -777,17 +798,17 @@ function SessionPage() {
           targetUserId,
           requesterId: userId,
         })
-        console.log(`Sent HD video request to user ${targetUserId}`)
+        console.debug(`Sent HD video request to user ${targetUserId}`)
       } else {
         contextSocket?.emit('request-sd-video', {
           targetUserId,
           requesterId: userId,
         })
-        console.log(`Sent SD video request to user ${targetUserId}`)
+        console.debug(`Sent SD video request to user ${targetUserId}`)
 
         const success = await subscribeToSDVideo(targetUserId)
         if (success) {
-          console.log(`Successfully switched to SD video for ${targetUserId}`)
+          console.debug(`Successfully switched to SD video for ${targetUserId}`)
         } else {
           console.error(`Failed to switch to SD video for ${targetUserId}`)
         }
@@ -818,11 +839,11 @@ function SessionPage() {
 
     if (currentQuality === 'HD') {
       // HD to SD: Direct transition, no permission needed
-      console.log(`Switching from HD to SD for ${targetUserId}`)
+      console.debug(`Switching from HD to SD for ${targetUserId}`)
       await handleQualityTransition(targetUserId, 'HD', 'SD')
     } else {
       // SD to HD: Request permission first
-      console.log(`Requesting HD permission from ${targetUserId}`)
+      console.debug(`Requesting HD permission from ${targetUserId}`)
 
       // Add to pending requests
       setPendingHDRequests((prev) => new Set(prev).add(targetUserId))
@@ -831,7 +852,7 @@ function SessionPage() {
         targetUserId,
         requesterId: userId,
       })
-      console.log(`Sent HD permission request to user ${targetUserId}`)
+      console.debug(`Sent HD permission request to user ${targetUserId}`)
       // Wait for permission response - handleQualityTransition will be called based on response
     }
   }
@@ -839,7 +860,7 @@ function SessionPage() {
   // HD Permission Response Functions
   const handleHDPermissionAccept = () => {
     if (hdPermissionRequest && contextSocket) {
-      console.log(`Accepting HD permission request from ${hdPermissionRequest.requesterId}`)
+      console.debug(`Accepting HD permission request from ${hdPermissionRequest.requesterId}`)
       contextSocket.emit('hd-permission-response', {
         requesterId: hdPermissionRequest.requesterId,
         allowed: true,
@@ -850,7 +871,7 @@ function SessionPage() {
 
   const handleHDPermissionReject = () => {
     if (hdPermissionRequest && contextSocket) {
-      console.log(`Rejecting HD permission request from ${hdPermissionRequest.requesterId}`)
+      console.debug(`Rejecting HD permission request from ${hdPermissionRequest.requesterId}`)
       contextSocket.emit('hd-permission-response', {
         requesterId: hdPermissionRequest.requesterId,
         allowed: false,
@@ -864,7 +885,7 @@ function SessionPage() {
       return
     }
 
-    console.log('Starting HD encoding process...')
+    console.debug('Starting HD encoding process...')
 
     setUsers((users) => {
       const u = users[userId]
@@ -879,7 +900,7 @@ function SessionPage() {
       if (videoHDTrack && moqClientRef.current) {
         // TODO: HD Track should be announced only when the user accepts
         // TODO: Otherwise, SD should continue (the unsub should not happen)
-        console.log('Announcing HD track to server')
+        console.debug('Announcing HD track to server')
         contextSocket?.emit('update-track', { trackType: 'video-hd', event: 'announce' })
 
         if (selfMediaStream.current && tracksRef.current) {
@@ -896,7 +917,7 @@ function SessionPage() {
           if (videoHDEncoderObjRef.current) {
             videoHDEncoderObjRef.current.offset = offsetRef.current
             videoHDEncoderObjRef.current.start(selfMediaStream.current)
-            console.log('HD encoder started successfully')
+            console.debug('HD encoder started successfully')
           }
 
           contextSocket?.emit('update-track', { trackType: 'video-hd', event: 'publish' })
@@ -915,7 +936,7 @@ function SessionPage() {
 
     contextSocket?.emit('toggle-button', { kind: 'cam-hd', value: true })
 
-    console.log('Started HD encoding due to remote request')
+    console.debug('Started HD encoding due to remote request')
   }
 
   const handleStopHDEncoding = () => {
@@ -936,7 +957,7 @@ function SessionPage() {
 
     contextSocket?.emit('toggle-button', { kind: 'cam-hd', value: false })
 
-    console.log('Stopped HD encoding due to remote request')
+    console.debug('Stopped HD encoding due to remote request')
   }
 
   const handleToggleScreenShare = async () => {
@@ -953,7 +974,7 @@ function SessionPage() {
 
         selfScreenshareStream.current = screenStream
 
-        console.log('Screenshare stream tracks:', screenStream.getTracks())
+        console.debug('Screenshare stream tracks:', screenStream.getTracks())
 
         try {
           if (!tracksRef.current) {
@@ -962,7 +983,7 @@ function SessionPage() {
           }
 
           if (screenshareEncoderObjRef.current) {
-            console.log('Cleaning up previous screenshare encoder')
+            console.debug('Cleaning up previous screenshare encoder')
             try {
               screenshareEncoderObjRef.current.stop()
             } catch (error) {
@@ -972,7 +993,7 @@ function SessionPage() {
           }
 
           const screenshareFullTrackName = getTrackname(roomState!.name, userId, 'screenshare')
-          console.log('screenshareFullTrackName:', screenshareFullTrackName)
+          console.debug('screenshareFullTrackName:', screenshareFullTrackName)
 
           const screenshareStreamController = tracksRef.current.getScreenshareStreamController()
 
@@ -983,7 +1004,7 @@ function SessionPage() {
             publisherPriority: 1,
             objectForwardingPreference: ObjectForwardingPreference.Subgroup,
           })
-          console.log('screenshareResult:', screenshareResult)
+          console.debug('screenshareResult:', screenshareResult)
           screenshareEncoderObjRef.current = screenshareResult
 
           const updateTrackRequest: UpdateTrackRequest = {
@@ -991,7 +1012,7 @@ function SessionPage() {
             event: 'announce',
           }
           contextSocket?.emit('update-track', updateTrackRequest)
-          console.log('Screenshare track announced to other clients')
+          console.debug('Screenshare track announced to other clients')
         } catch (error) {
           console.error('Failed to start screenshare encoder:', error)
           if (selfScreenshareStream.current) {
@@ -1009,7 +1030,7 @@ function SessionPage() {
         }))
 
         screenTrack.onended = () => {
-          console.log('Screen track ended - cleaning up screenshare')
+          console.debug('Screen track ended - cleaning up screenshare')
 
           setIsScreenSharing(false)
           contextSocket?.emit('screen-share-toggled', { userId, hasScreenshare: false })
@@ -1082,7 +1103,7 @@ function SessionPage() {
   useEffect(() => {
     async function startPublisher() {
       try {
-        //console.log('Starting publisher for user:', userId);
+        console.debug('Starting publisher for user:', userId)
         if (!userId) {
           console.error('User ID is not defined')
           return
@@ -1102,13 +1123,13 @@ function SessionPage() {
         }
         setHasLocalAudio(audioTracks.length > 0)
 
-        //console.log('Got user media:', selfMediaStream.current);
+        console.debug('Got user media:', selfMediaStream.current)
         setMediaReady(true)
 
         if (selfVideoRef.current) {
           selfVideoRef.current.srcObject = selfMediaStream.current
           selfVideoRef.current.muted = true // Ensure muted
-          //console.log('Set video srcObject');
+          console.debug('Set video srcObject')
         } else {
           console.error('selfVideoRef.current is null')
           return
@@ -1130,7 +1151,7 @@ function SessionPage() {
           console.error('Self user not found in room state: %s', userId)
           return
         }
-        //console.log('Self user found:', selfUser);
+        console.debug('Self user found:', selfUser)
         const videoTrack = selfUser?.publishedTracks['video']
         const videoTrackAlias = videoTrack?.alias
 
@@ -1258,13 +1279,12 @@ function SessionPage() {
         console.error('Error in publisher setup:', err)
       }
     }
-    //console.log('before startPublisher', moqClient, userId, selfVideoRef.current, publisherInitialized)
     if (moqClient && userId && selfVideoRef.current && !publisherInitialized.current) {
       publisherInitialized.current = true
       setTimeout(async () => {
         try {
           await startPublisher()
-          //console.log('startPublisher done')
+          console.debug('startPublisher done')
         } catch (err) {
           console.error('error in startPublishing', err)
         }
@@ -1288,12 +1308,17 @@ function SessionPage() {
         client.onDataReceived = (_data) => {
           // console.warn('Data received:', data)
         }
-        //console.log('initClient', client)
         if (roomState && Object.values(users).length === 0) {
           const otherUsers = Object.keys(roomState.users).filter((uId) => uId != userId)
           setUsers(roomState.users)
 
           Object.keys(roomState.users).forEach((uId) => initializeTelemetryForUser(uId))
+
+          // Track startup latency for existing users in the room
+          otherUsers.forEach((uId) => {
+            testMetricsManagerRef.current.trackStartupJoinButtonClick(uId)
+          })
+
           const canvasRefs = Object.fromEntries(otherUsers.map((uId) => [uId, React.createRef<HTMLCanvasElement>()]))
           const screenshareCanvasRefs = Object.fromEntries(
             otherUsers.map((uId) => [uId, React.createRef<HTMLCanvasElement>()]),
@@ -1312,6 +1337,8 @@ function SessionPage() {
       console.info(`User joined: ${user.name} (${user.id})`)
       addUser(user)
       initializeTelemetryForUser(user.id)
+      testMetricsManagerRef.current.trackStartupJoinButtonClick(user.id)
+
       setRemoteCanvasRefs((prev) => ({
         ...prev,
         [user.id]: React.createRef<HTMLCanvasElement>(),
@@ -1334,7 +1361,7 @@ function SessionPage() {
 
     socket.on('track-updated', (response: TrackUpdateResponse) => {
       setUsers((prevUsers) => {
-        //console.log('track-updated', prevUsers, response)
+        console.debug('track-updated', prevUsers, response)
         const updatedUser = prevUsers[response.userId]
         if (updatedUser) {
           const track = response.track
@@ -1346,7 +1373,7 @@ function SessionPage() {
             track.kind === 'video-hd'
           ) {
             updatedUser.publishedTracks[track.kind] = track
-            console.log(
+            console.debug(
               `Track updated for ${response.userId}: ${track.kind} - alias: ${track.alias}, announced: ${track.announced}`,
             )
           }
@@ -1356,10 +1383,10 @@ function SessionPage() {
 
       // Handle HD video subscription outside of setState
       if (response.track.kind === 'video-hd' && response.track.announced > 0) {
-        console.log('HD track announced, checking if we should subscribe...')
+        console.debug('HD track announced, checking if we should subscribe...')
 
         const currentQuality = userVideoQualitiesRef.current[response.userId]
-        console.log(`HD track announced by ${response.userId}, current requested quality: ${currentQuality}`)
+        console.debug(`HD track announced by ${response.userId}, current requested quality: ${currentQuality}`)
 
         if (currentQuality === 'HD') {
           if (hdSubscriptionAttemptsRef.current.has(response.userId)) {
@@ -1367,7 +1394,7 @@ function SessionPage() {
             return
           }
 
-          console.log(`Auto-subscribing to HD video from ${response.userId}`)
+          console.debug(`Auto-subscribing to HD video from ${response.userId}`)
           hdSubscriptionAttemptsRef.current.add(response.userId)
 
           setTimeout(() => {
@@ -1377,9 +1404,9 @@ function SessionPage() {
             subscribeToHDVideoWithState(response.userId, currentUsers, currentCanvasRefs)
               .then((success) => {
                 if (success) {
-                  console.log(`HD subscription successful for ${response.userId}`)
+                  console.debug(`HD subscription successful for ${response.userId}`)
                 } else {
-                  console.log(`HD subscription failed for ${response.userId}`)
+                  console.debug(`HD subscription failed for ${response.userId}`)
                 }
               })
               .catch((error) => {
@@ -1391,7 +1418,7 @@ function SessionPage() {
               })
           }, 1000) // Increased delay to 1 second
         } else {
-          console.log(`Not subscribing - current quality is ${currentQuality}, not HD`)
+          console.debug(`Not subscribing - current quality is ${currentQuality}, not HD`)
         }
       }
     })
@@ -1412,18 +1439,18 @@ function SessionPage() {
       })
     })
     socket.on('screen-share-toggled', ({ userId: toggledUserId, hasScreenshare }) => {
-      console.log(`Screen share toggled for ${toggledUserId}: ${hasScreenshare}`)
+      console.debug(`Screen share toggled for ${toggledUserId}: ${hasScreenshare}`)
 
       setUsers((prevUsers) => {
         if (!prevUsers[toggledUserId]) return prevUsers
 
         if (!hasScreenshare && prevUsers[toggledUserId].hasScreenshare) {
-          console.log(`User ${toggledUserId} stopped screensharing, triggering unsubscription`)
+          console.debug(`User ${toggledUserId} stopped screensharing, triggering unsubscription`)
           unsubscribeFromScreenshare(toggledUserId, false)
 
           const screenshareVirtualId = `${toggledUserId}-screenshare`
           if (maximizedUserId === screenshareVirtualId) {
-            console.log(`Clearing maximized screenshare user ${screenshareVirtualId}`)
+            console.debug(`Clearing maximized screenshare user ${screenshareVirtualId}`)
             setMaximizedUserId(null)
           }
 
@@ -1446,7 +1473,7 @@ function SessionPage() {
 
     // Handle HD permission request from another user
     socket.on('hd-permission-request', ({ requesterId }) => {
-      console.log(`User ${requesterId} is requesting HD video permission from me`)
+      console.debug(`User ${requesterId} is requesting HD video permission from me`)
       const requester = usersRef.current[requesterId]
       const requesterName = requester ? requester.name : 'Unknown User'
       setHdPermissionRequest({ requesterId, requesterName })
@@ -1454,7 +1481,7 @@ function SessionPage() {
 
     // Handle permission denied response
     socket.on('hd-permission-denied', ({ targetUserId }) => {
-      console.log(`HD permission denied by ${targetUserId}`)
+      console.debug(`HD permission denied by ${targetUserId}`)
       // User stays in SD mode - no action needed since we didn't change quality yet
 
       // Remove from pending requests
@@ -1467,7 +1494,7 @@ function SessionPage() {
 
     // Handle permission granted response
     socket.on('hd-permission-granted', ({ targetUserId }) => {
-      console.log(`HD permission granted by ${targetUserId}`)
+      console.debug(`HD permission granted by ${targetUserId}`)
 
       // Remove from pending requests
       setPendingHDRequests((prev) => {
@@ -1476,6 +1503,8 @@ function SessionPage() {
         return newSet
       })
 
+      testMetricsManagerRef.current.trackQualityToggleStart(targetUserId, 'SD->HD')
+
       // First, set the quality to HD so the track-updated handler will auto-subscribe
       setUserVideoQualities((prev) => {
         const newQualities = {
@@ -1483,14 +1512,14 @@ function SessionPage() {
           [targetUserId]: 'HD' as VideoQuality,
         }
         userVideoQualitiesRef.current = newQualities
-        console.log(`Set quality to HD for ${targetUserId} - track-updated will handle the rest`)
+        console.debug(`Set quality to HD for ${targetUserId} - track-updated will handle the rest`)
         return newQualities
       })
 
       // Unsubscribe from SD video after a short delay to ensure HD subscription starts
       setTimeout(async () => {
         try {
-          console.log(`Unsubscribing from SD video for ${targetUserId}`)
+          console.debug(`Unsubscribing from SD video for ${targetUserId}`)
           await unsubscribeFromUser(targetUserId, 'video')
         } catch (error) {
           console.error(`Error unsubscribing from SD for ${targetUserId}:`, error)
@@ -1500,17 +1529,17 @@ function SessionPage() {
 
     // Handle direct HD video request (when permission is granted)
     socket.on('request-hd-video', ({ requesterId }) => {
-      console.log(`Starting HD encoding - permission was granted for ${requesterId}`)
+      console.debug(`Starting HD encoding - permission was granted for ${requesterId}`)
       handleStartHDEncoding()
     })
 
     socket.on('request-sd-video', ({ requesterId }) => {
-      console.log(`User ${requesterId} requested SD video from me`)
+      console.debug(`User ${requesterId} requested SD video from me`)
       handleStopHDEncoding()
     })
 
     socket.on('hd-already-active', ({ targetUserId }) => {
-      console.log(`HD encoding already active for ${targetUserId} - subscribing to existing HD stream`)
+      console.debug(`HD encoding already active for ${targetUserId} - subscribing to existing HD stream`)
 
       // Remove from pending requests since we're getting direct access to HD
       setPendingHDRequests((prev) => {
@@ -1518,6 +1547,8 @@ function SessionPage() {
         newSet.delete(targetUserId)
         return newSet
       })
+
+      testMetricsManagerRef.current.trackQualityToggleStart(targetUserId, 'SD->HD')
 
       manualQualityTransitionsRef.current.add(targetUserId)
 
@@ -1527,13 +1558,13 @@ function SessionPage() {
           [targetUserId]: 'HD' as VideoQuality,
         }
         userVideoQualitiesRef.current = newQualities
-        console.log(`Updated quality state to HD for ${targetUserId}:`, newQualities)
+        console.debug(`Updated quality state to HD for ${targetUserId}:`, newQualities)
         return newQualities
       })
 
       setTimeout(async () => {
         try {
-          console.log(`Unsubscribing from SD video for ${targetUserId} before subscribing to existing HD`)
+          console.debug(`Unsubscribing from SD video for ${targetUserId} before subscribing to existing HD`)
           await unsubscribeFromUser(targetUserId, 'video')
 
           await new Promise((resolve) => setTimeout(resolve, 500))
@@ -1541,11 +1572,11 @@ function SessionPage() {
           const currentUsers = usersRef.current
           const currentCanvasRefs = remoteCanvasRefsRef.current
 
-          console.log(`Subscribing to existing HD video for ${targetUserId}`)
+          console.debug(`Subscribing to existing HD video for ${targetUserId}`)
           const success = await subscribeToHDVideoWithState(targetUserId, currentUsers, currentCanvasRefs)
 
           if (success) {
-            console.log(`Successfully subscribed to existing HD video for ${targetUserId}`)
+            console.debug(`Successfully subscribed to existing HD video for ${targetUserId}`)
           } else {
             console.error(`Failed to subscribe to existing HD video for ${targetUserId}`)
           }
@@ -1977,18 +2008,9 @@ function SessionPage() {
   }, [roomState?.created, sessionDurationMinutes])
 
   useEffect(() => {
-    console.log('Screenshare useEffect triggered:', {
-      hasStream: !!selfScreenshareStream.current,
-      hasRef: !!selfScreenshareRef.current,
-      isScreenSharing,
-      streamTracks: selfScreenshareStream.current?.getTracks()?.length || 0,
-    })
-
     if (selfScreenshareStream.current && selfScreenshareRef.current && isScreenSharing) {
-      console.log('Assigning screenshare stream to ref in useEffect')
       selfScreenshareRef.current.srcObject = selfScreenshareStream.current
       selfScreenshareRef.current.muted = true
-      console.log('Screenshare video element configured successfully:', selfScreenshareRef.current)
     }
   }, [isScreenSharing, selfScreenshareStream.current])
 
@@ -2006,7 +2028,6 @@ function SessionPage() {
   }
 
   function handleRemoteVideo(canvasRef: React.RefObject<HTMLCanvasElement>) {
-    //console.log('handleRemoteVideo init', canvasRef)
     if (!canvasRef?.current) return
     if (!moqClient) return
     if (canvasRef.current.dataset.status) return
@@ -2030,23 +2051,14 @@ function SessionPage() {
       tracksReady && isCompletelyUnsubscribed && !wasIntentionallyUnsubscribed && !isInManualTransition
 
     if (shouldSubscribe) {
-      console.log(`Starting subscription to ${userId} - video: ${videoTrackAlias}, audio: ${audioTrackAlias}`)
       setTimeout(async () => {
         await subscribeToTrack(roomName, userId, videoTrackAlias, audioTrackAlias, chatTrackAlias, canvasRef)
       }, 500)
     } else {
       if (tracksReady && isInManualTransition) {
-        console.log(`Skipping auto-subscription to ${userId} - user is undergoing manual quality transition`)
       } else if (tracksReady && wasIntentionallyUnsubscribed) {
-        console.log(`Skipping auto-subscription to ${userId} - user was intentionally unsubscribed from both tracks`)
       } else if (tracksReady && !isCompletelyUnsubscribed) {
-        console.log(
-          `Skipping subscription to ${userId} - already subscribed (video: ${isVideoSubscribed}, videoHD: ${isVideoHDSubscribed}, audio: ${isAudioSubscribed})`,
-        )
       } else if (!tracksReady) {
-        console.log(
-          `Not ready to subscribe to ${userId} yet - announced: ${announced}, video: ${videoTrackAlias}, audio: ${audioTrackAlias}`,
-        )
       }
     }
   }
@@ -2071,16 +2083,14 @@ function SessionPage() {
       tracksReady && userHasScreenshare && !isScreenshareSubscribed && !wasScreenshareIntentionallyUnsubscribed
 
     if (shouldSubscribe) {
-      console.log(`Starting screenshare subscription to ${userId} - screenshare: ${screenshareTrackAlias}`)
       setTimeout(async () => {
         await subscribeToScreenshareTrack(roomName, userId, screenshareTrackAlias, canvasRef)
       }, 500)
     } else {
       if (!userHasScreenshare && isScreenshareSubscribed) {
-        console.log(`User ${userId} stopped screensharing, cleaning up subscription`)
         unsubscribeFromScreenshare(userId, false)
       } else if (!tracksReady) {
-        console.log(
+        console.debug(
           `Not ready to subscribe to screenshare for ${userId} yet - screenshareTrackAlias: ${screenshareTrackAlias}`,
         )
       }
@@ -2098,11 +2108,11 @@ function SessionPage() {
   ) {
     try {
       const the_client = client ? client : moqClient!
-      //console.log('subscribeToTrack', roomName, userId, videoTrackAlias, audioTrackAlias, canvasRef)
+      console.debug('subscribeToTrack', roomName, userId, videoTrackAlias, audioTrackAlias, canvasRef)
       // TODO: sub to audio and video separately
       // for now, we just check the video announced date
       if (canvasRef.current && !canvasRef.current.dataset.status) {
-        //console.log("subscribeToTrack - Now will try to subscribe")
+        console.debug('subscribeToTrack - Now will try to subscribe')
         const videoFullTrackName = getTrackname(roomName, userId, 'video')
         const audioFullTrackName = getTrackname(roomName, userId, 'audio')
         const chatFullTrackName = getTrackname(roomName, userId, 'chat')
@@ -2111,7 +2121,13 @@ function SessionPage() {
         initializeTelemetryForUser(userId)
         const userTelemetry = telemetryInstances.current[userId]
 
-        //console.log("subscribeToTrack - Use video subscriber called", videoTrackAlias, audioTrackAlias, videoFullTrackName, audioFullTrackName)
+        console.debug(
+          'subscribeToTrack - Use video subscriber called',
+          videoTrackAlias,
+          audioTrackAlias,
+          videoFullTrackName,
+          audioFullTrackName,
+        )
         // Subscribe to video and audio separately for independent control
         const videoResult = await onlyUseVideoSubscriber(
           the_client,
@@ -2148,7 +2164,7 @@ function SessionPage() {
 
         // Subscribe to chat if we have a valid chat track alias
         if (chatTrackAlias > 0) {
-          console.log('Subscribing to chat track with alias:', chatTrackAlias)
+          console.debug('Subscribing to chat track with alias:', chatTrackAlias)
           try {
             await subscribeToChatTrack({
               moqClient: the_client,
@@ -2166,7 +2182,7 @@ function SessionPage() {
                 ])
               },
             })
-            console.log('Successfully subscribed to chat for user:', userId)
+            console.debug('Successfully subscribed to chat for user:', userId)
           } catch (error) {
             console.error('Failed to subscribe to chat for user:', userId, error)
           }
@@ -2174,7 +2190,7 @@ function SessionPage() {
           console.warn('Chat track alias is invalid or not set:', chatTrackAlias, 'for user:', userId)
           // Try to subscribe to chat later with a retry mechanism
           setTimeout(async () => {
-            console.log('Retrying chat subscription for user:', userId)
+            console.debug('Retrying chat subscription for user:', userId)
             const retrychatTrackAlias = parseInt(canvasRef.current?.dataset.chattrackalias || '-1')
             if (retrychatTrackAlias > 0) {
               try {
@@ -2194,7 +2210,7 @@ function SessionPage() {
                     ])
                   },
                 })
-                console.log('Successfully subscribed to chat on retry for user:', userId)
+                console.debug('Successfully subscribed to chat on retry for user:', userId)
               } catch (error) {
                 console.error('Failed to subscribe to chat on retry for user:', userId, error)
               }
@@ -2203,9 +2219,16 @@ function SessionPage() {
             }
           }, 2000) // Wait 2 seconds before retrying chat subscription
         }
-        //console.log('subscribeToTrack result', result)
         // TODO: result comes true all the time, refactor...
         canvasRef.current!.dataset.status = subscriptionResult ? 'playing' : ''
+
+        // Track first frame for startup latency test - always track, auto-downloads immediately
+        if (subscriptionResult) {
+          const user = users[userId]
+          if (user) {
+            testMetricsManagerRef.current.trackStartupFirstFrame(userId, user.name, user.hasVideo)
+          }
+        }
       }
     } catch (err) {
       console.error('Error in subscribing', roomName, userId, err)
@@ -2219,7 +2242,7 @@ function SessionPage() {
     currentUsers: { [K: string]: RoomUser },
     currentCanvasRefs: { [id: string]: React.RefObject<HTMLCanvasElement> },
   ): Promise<boolean> {
-    console.log(`🔍 subscribeToHDVideoWithState called for ${targetUserId}`)
+    console.debug(`🔍 subscribeToHDVideoWithState called for ${targetUserId}`)
 
     if (!roomState || !moqClientRef.current) {
       console.error('Room state or moqClient not available')
@@ -2269,7 +2292,15 @@ function SessionPage() {
             videoHDRequestId: hdResult.videoRequestId,
           },
         }))
-        console.log(`Successfully subscribed to HD video for user ${targetUserId}`)
+        console.debug(`Successfully subscribed to HD video for user ${targetUserId}`)
+
+        // Track quality toggle completion
+
+        const user = currentUsers[targetUserId]
+        if (user) {
+          testMetricsManagerRef.current.trackQualityToggleComplete(targetUserId, user.name)
+        }
+
         return true
       }
     } catch (error) {
@@ -2279,7 +2310,7 @@ function SessionPage() {
   }
 
   async function subscribeToSDVideo(targetUserId: string): Promise<boolean> {
-    console.log(`subscribeToSDVideo called for ${targetUserId}`)
+    console.debug(`subscribeToSDVideo called for ${targetUserId}`)
 
     if (!roomState || !moqClientRef.current) {
       console.error('Room state or moqClient not available for SD subscription')
@@ -2305,7 +2336,7 @@ function SessionPage() {
       initializeTelemetryForUser(targetUserId)
       const userTelemetry = telemetryInstances.current[targetUserId]
 
-      console.log(`About to subscribe to SD video:`, {
+      console.debug(`About to subscribe to SD video:`, {
         targetUserId,
         trackAlias: videoTrackAlias,
         fullTrackName: videoFullTrackName.toString(),
@@ -2331,7 +2362,15 @@ function SessionPage() {
             videoRequestId: sdResult.videoRequestId,
           },
         }))
-        console.log(`Successfully subscribed to SD video for user ${targetUserId}`)
+        console.debug(`Successfully subscribed to SD video for user ${targetUserId}`)
+
+        // Track quality toggle completion
+
+        const user = usersRef.current[targetUserId]
+        if (user) {
+          testMetricsManagerRef.current.trackQualityToggleComplete(targetUserId, user.name)
+        }
+
         return true
       }
     } catch (error) {
@@ -2354,7 +2393,7 @@ function SessionPage() {
         const screenshareFullTrackName = getTrackname(roomName, userId, 'screenshare')
         screenshareCanvasRef.current!.dataset.status = 'pending'
 
-        console.log(`Starting screenshare subscription for ${userId}`, {
+        console.debug(`Starting screenshare subscription for ${userId}`, {
           trackName: screenshareFullTrackName,
           trackAlias: screenshareTrackAlias,
         })
@@ -2389,7 +2428,7 @@ function SessionPage() {
 
         screenshareCanvasRef.current!.dataset.status = screenshareResult ? 'playing' : ''
       } else {
-        console.log(`Cannot subscribe to screenshare for ${userId}:`, {
+        console.debug(`Cannot subscribe to screenshare for ${userId}:`, {
           hasCanvasRef: !!screenshareCanvasRef.current,
           currentStatus: screenshareCanvasRef.current?.dataset.status,
         })
@@ -2438,7 +2477,7 @@ function SessionPage() {
       const screenshareCanvasRef = remoteScreenshareCanvasRefs[targetUserId]
       if (screenshareCanvasRef?.current) {
         screenshareCanvasRef.current.dataset.status = ''
-        console.log(`Reset canvas status for ${targetUserId} screenshare (no subscription case)`)
+        console.debug(`Reset canvas status for ${targetUserId} screenshare (no subscription case)`)
       }
 
       return
@@ -2447,9 +2486,9 @@ function SessionPage() {
     let unsubscriptionSuccess = false
 
     try {
-      console.log(`Attempting to unsubscribe from ${targetUserId} screenshare with requestId:`, requestId)
+      console.debug(`Attempting to unsubscribe from ${targetUserId} screenshare with requestId:`, requestId)
       await client.unsubscribe(requestId)
-      console.log(`Successfully unsubscribed from ${targetUserId} screenshare`)
+      console.debug(`Successfully unsubscribed from ${targetUserId} screenshare`)
       unsubscriptionSuccess = true
     } catch (error) {
       console.error(`Failed to unsubscribe from ${targetUserId} screenshare:`, error)
@@ -2473,7 +2512,7 @@ function SessionPage() {
       clearScreenshareCanvas(canvas)
     }
 
-    console.log(
+    console.debug(
       `Screenshare cleanup completed for ${targetUserId} (unsubscription: ${unsubscriptionSuccess ? 'success' : 'failed'})`,
       {
         refCleared: !screenshareSubscriptionsRef.current[targetUserId],
@@ -2483,7 +2522,7 @@ function SessionPage() {
   }
 
   function leaveRoom() {
-    //console.log('Leaving room...');
+    console.debug('Leaving room...')
 
     // Clean up any pending room closed messages and restore title
     setPendingRoomClosedMessage(null)
@@ -2500,7 +2539,7 @@ function SessionPage() {
     }
 
     if (videoEncoderObjRef.current && videoEncoderObjRef.current.stop) {
-      //console.log('Stopping video encoder...');
+      console.debug('Stopping video encoder...')
       videoEncoderObjRef.current.stop()
       videoEncoderObjRef.current = null
     }
@@ -2524,7 +2563,7 @@ function SessionPage() {
   }
 
   const unsubscribeFromHDVideo = async (targetUserId: string): Promise<boolean> => {
-    console.log(`🔍 unsubscribeFromHDVideo called for ${targetUserId}`)
+    console.debug(`🔍 unsubscribeFromHDVideo called for ${targetUserId}`)
 
     if (!moqClient || targetUserId === userId) {
       console.warn(
@@ -2540,12 +2579,12 @@ function SessionPage() {
     }
 
     try {
-      console.log(
+      console.debug(
         `Attempting to unsubscribe from ${targetUserId} HD video with requestId:`,
         subscription.videoHDRequestId,
       )
       await moqClient.unsubscribe(subscription.videoHDRequestId)
-      console.log(`Successfully unsubscribed from ${targetUserId} HD video`)
+      console.debug(`Successfully unsubscribed from ${targetUserId} HD video`)
 
       setUserSubscriptions((prev) => ({
         ...prev,
@@ -2586,15 +2625,18 @@ function SessionPage() {
       subscription.videoRequestId !== undefined
     ) {
       try {
-        console.log(`Attempting to unsubscribe from ${targetUserId} video with requestId:`, subscription.videoRequestId)
+        console.debug(
+          `Attempting to unsubscribe from ${targetUserId} video with requestId:`,
+          subscription.videoRequestId,
+        )
         await _client.unsubscribe(subscription.videoRequestId)
-        console.log(`Successfully unsubscribed from ${targetUserId} video`)
+        console.debug(`Successfully unsubscribed from ${targetUserId} video`)
         videoUnsubscribed = true
       } catch (error) {
         console.error(`Failed to unsubscribe from ${targetUserId} video:`, error)
       }
     } else if (type === 'video' || type === 'both') {
-      console.log(`Skipping video unsubscribe for ${targetUserId} - not subscribed or missing requestId`)
+      console.debug(`Skipping video unsubscribe for ${targetUserId} - not subscribed or missing requestId`)
     }
 
     const audioTypeCheck = type === 'audio' || type === 'both'
@@ -2603,18 +2645,18 @@ function SessionPage() {
 
     if (audioTypeCheck && audioSubscribedCheck && audioRequestIdCheck) {
       try {
-        console.log(
+        console.debug(
           `Attempting to unsubscribe from ${targetUserId} audio with requestId:`,
           subscription.audioRequestId!,
         )
         await _client.unsubscribe(subscription.audioRequestId!)
-        console.log(`Successfully unsubscribed from ${targetUserId} audio`)
+        console.debug(`Successfully unsubscribed from ${targetUserId} audio`)
         audioUnsubscribed = true
       } catch (error) {
         console.error(`Failed to unsubscribe from ${targetUserId} audio:`, error)
       }
     } else if (type === 'audio' || type === 'both') {
-      console.log(`Skipping audio unsubscribe for ${targetUserId} - condition failed`)
+      console.debug(`Skipping audio unsubscribe for ${targetUserId} - condition failed`)
     }
 
     setUserSubscriptions((prev) => {
@@ -2641,7 +2683,7 @@ function SessionPage() {
         intentionallyUnsubscribed: willBeCompletelyUnsubscribed,
       }
 
-      console.log(`Updated subscription state for ${targetUserId}:`, newSubscription)
+      console.debug(`Updated subscription state for ${targetUserId}:`, newSubscription)
       return {
         ...prev,
         [targetUserId]: newSubscription,
@@ -2654,7 +2696,7 @@ function SessionPage() {
         canvasRef.current.dataset.status = ''
         // Don't cleanup the canvas worker, just reset status
         // The worker will be reused and reconfigured for HD if needed
-        console.log(`Reset canvas status for ${targetUserId}`)
+        console.debug(`Reset canvas status for ${targetUserId}`)
       }
     }
   }
@@ -2686,17 +2728,17 @@ function SessionPage() {
       const needsAudioSub = (type === 'audio' || type === 'both') && !hasAudioSub
 
       if (!needsVideoSub && !needsAudioSub) {
-        console.log(`Already subscribed to ${targetUserId} ${type}`)
+        console.debug(`Already subscribed to ${targetUserId} ${type}`)
         return
       }
 
       if (canvasRef.current.dataset.status) {
-        console.log(`Resetting canvas status for ${targetUserId} to allow resubscription`)
+        console.debug(`Resetting canvas status for ${targetUserId} to allow resubscription`)
         canvasRef.current.dataset.status = ''
       }
 
       if (needsVideoSub && needsAudioSub) {
-        console.log(`Subscribing to both video and audio for ${targetUserId}`)
+        console.debug(`Subscribing to both video and audio for ${targetUserId}`)
         await subscribeToTrack(
           roomName,
           targetUserId,
@@ -2706,7 +2748,11 @@ function SessionPage() {
           canvasRef,
         )
       } else if (needsVideoSub) {
-        console.log(`Adding video subscription for ${targetUserId}`)
+        console.debug(`Adding video subscription for ${targetUserId}`)
+
+        // Track video resub start (when user clicks to resub)
+        testMetricsManagerRef.current.trackVideoResubStart(targetUserId)
+
         const videoFullTrackName = getTrackname(roomName, targetUserId, 'video')
         initializeTelemetryForUser(targetUserId)
         const userTelemetry = telemetryInstances.current[targetUserId]
@@ -2732,7 +2778,13 @@ function SessionPage() {
             }))
 
             canvasRef.current.dataset.status = 'playing'
-            console.log(`Video subscription added for ${targetUserId}, requestId: ${videoResult.videoRequestId}`)
+            console.debug(`Video subscription added for ${targetUserId}, requestId: ${videoResult.videoRequestId}`)
+
+            // Track video resub complete
+            const user = usersRef.current[targetUserId]
+            if (user) {
+              testMetricsManagerRef.current.trackVideoResubComplete(targetUserId, user.name)
+            }
           } else {
             console.error(`Video subscription failed for ${targetUserId}`)
           }
@@ -2740,7 +2792,10 @@ function SessionPage() {
           console.error(`Failed to add video subscription for ${targetUserId}:`, error)
         }
       } else if (needsAudioSub) {
-        console.log(`Adding audio subscription for ${targetUserId}`)
+        console.debug(`Adding audio subscription for ${targetUserId}`)
+
+        // Track audio resub start (when user clicks to resub)
+        testMetricsManagerRef.current.trackAudioResubStart(targetUserId)
 
         const audioFullTrackName = getTrackname(roomName, targetUserId, 'audio')
         initializeTelemetryForUser(targetUserId)
@@ -2765,7 +2820,13 @@ function SessionPage() {
               },
             }))
 
-            console.log(`Audio subscription added for ${targetUserId}, requestId: ${audioResult.audioRequestId}`)
+            console.debug(`Audio subscription added for ${targetUserId}, requestId: ${audioResult.audioRequestId}`)
+
+            // Track audio resub complete
+            const user = usersRef.current[targetUserId]
+            if (user) {
+              testMetricsManagerRef.current.trackAudioResubComplete(targetUserId, user.name)
+            }
           } else {
             console.error(`Audio subscription failed for ${targetUserId}`)
           }
@@ -2889,7 +2950,7 @@ function SessionPage() {
 
   useEffect(() => {
     if (maximizedUserId && !usersToRender.find((u) => u.id === maximizedUserId)) {
-      console.log(`Maximized user ${maximizedUserId} no longer exists, clearing maximized state`)
+      console.debug(`Maximized user ${maximizedUserId} no longer exists, clearing maximized state`)
       setMaximizedUserId(null)
     }
   }, [maximizedUserId, usersToRender])
@@ -3830,6 +3891,7 @@ function SessionPage() {
             </button>
           </>
         )}
+
         {/* End Call Button */}
         <button
           onClick={leaveRoom}
@@ -3857,6 +3919,12 @@ function SessionPage() {
           audioObjects={fetchedRewindData[selectedRewindUserId]?.audio || []}
           userName={users[selectedRewindUserId]?.name || 'Unknown User'}
           userColor={getUserColorHex(selectedRewindUserId)}
+          onPlaybackStarted={() => {
+            const user = users[selectedRewindUserId]
+            if (user) {
+              testMetricsManagerRef.current.trackRewindPlaybackStarted(selectedRewindUserId, user.name)
+            }
+          }}
         />
       )}
 
