@@ -207,7 +207,6 @@ export async function startAudioEncoder({
   audioGroupId: number
   objectForwardingPreference: ObjectForwardingPreference
 }) {
-  console.debug('Starting audio encoder with group ID:', audioGroupId)
   let audioObjectId = 0n
   let currentAudioGroupId = audioGroupId
   let shouldEncode = true
@@ -225,7 +224,6 @@ export async function startAudioEncoder({
   source.connect(audioNode)
   audioNode.connect(audioContext.destination)
 
-  console.debug('adding audio encoder')
   let audioEncoder: AudioEncoder | null = null
   if (typeof AudioEncoder !== 'undefined') {
     audioEncoder = new AudioEncoder({
@@ -239,7 +237,6 @@ export async function startAudioEncoder({
         const locHeaders = new ExtensionHeaders().addCaptureTimestamp(captureTime)
 
         console.warn('Audio Group ID is:', currentAudioGroupId)
-        // console.debug('AudioEncoder output chunk:', chunk);
         const moqt = MoqtObject.newWithPayload(
           audioFullTrackName,
           new Location(BigInt(currentAudioGroupId), BigInt(audioObjectId++)),
@@ -249,7 +246,6 @@ export async function startAudioEncoder({
           locHeaders.build(),
           payload,
         )
-        // console.debug('AudioEncoder output:', moqt);
         audioStreamController?.enqueue(moqt)
       },
       error: console.error,
@@ -261,11 +257,9 @@ export async function startAudioEncoder({
   const AUDIO_PACKET_SAMPLES = 960
 
   audioNode.port.onmessage = (event) => {
-    // console.debug('Received audio data from AudioWorkletNode:', event.data);
     if (!audioEncoder) return
     if (!shouldEncode) return
 
-    // console.debug('Audio data received, processing...');
     const samples = event.data as Float32Array
     pcmBuffer.push(samples)
 
@@ -714,7 +708,6 @@ export function initializeVideoHDEncoder({
         videoHDStreamController?.enqueue(moqt)
 
         if (!isFirstKeyframeSent) {
-          console.debug('First HD video keyframe sent')
           isFirstKeyframeSent = true
         }
       },
@@ -1255,10 +1248,6 @@ export function updateWorkerForQuality(canvas: HTMLCanvasElement, isHD: boolean)
         window.appSettings.videoDecoderConfig.codedHeight || 360,
       )
     }
-
-    console.debug(
-      `Updated worker decoder config and canvas size for ${isHD ? 'HD (1280x720)' : 'SD (640x360)'} quality`,
-    )
   }
 }
 
@@ -1312,7 +1301,6 @@ export function clearScreenshareCanvas(canvas: HTMLCanvasElement): boolean {
 export function resizeCanvasWorker(canvas: HTMLCanvasElement, newWidth: number, newHeight: number): void {
   const worker = canvasWorkerMap.get(canvas)
   if (worker) {
-    console.debug(`Resizing canvas worker to ${newWidth}x${newHeight}`)
     worker.postMessage({
       type: 'resize',
       newWidth,
@@ -1332,20 +1320,17 @@ export function resizeCanvasForMaximization(
     const targetWidth = isHD ? 1920 : 1280 // Higher resolution for maximized view
     const targetHeight = isHD ? 1080 : 720
     resizeCanvasWorker(canvas, targetWidth, targetHeight)
-    console.debug(`Resized canvas for maximized view: ${targetWidth}x${targetHeight} (${isHD ? 'HD' : 'SD'} source)`)
   } else {
     // When not maximized, use the original video resolution
     const originalWidth = isHD ? 1280 : 640
     const originalHeight = isHD ? 720 : 360
     resizeCanvasWorker(canvas, originalWidth, originalHeight)
-    console.debug(`Resized canvas for normal view: ${originalWidth}x${originalHeight} (${isHD ? 'HD' : 'SD'} source)`)
   }
 }
 
 export function cleanupCanvasWorker(canvas: HTMLCanvasElement): boolean {
   const worker = canvasWorkerMap.get(canvas)
   if (worker) {
-    console.debug('Terminating canvas worker for cleanup')
     worker.terminate()
     canvasWorkerMap.delete(canvas)
     return true
@@ -1429,14 +1414,12 @@ export function subscribeOnlyVideo(
       }
 
       const { requestId } = response
-      console.debug('subscribeOnlyVideo: subscribed, requestId=', requestId)
 
       return {
         videoRequestId: requestId,
         cleanup: async () => {
           try {
             await moqClient.unsubscribe(requestId)
-            console.debug('subscribeOnlyVideo: unsubscribed requestId=', requestId)
           } catch (err) {
             console.warn('subscribeOnlyVideo: failed to unsubscribe', err)
           }
@@ -1458,7 +1441,6 @@ function handleWorkerMessages(
 ) {
   worker.onmessage = (event) => {
     if (event.data.type === 'audio') {
-      // console.debug('Received audio data from worker:', event.data);
       audioNode.port.postMessage(new Float32Array(event.data.samples))
     }
     if (event.data.type === 'video-telemetry') {
@@ -1569,12 +1551,9 @@ export function useVideoAndAudioSubscriber(
 ) {
   const setup = async (): Promise<{ videoRequestId?: bigint; audioRequestId?: bigint; cleanup: () => void }> => {
     const canvas = canvasRef.current
-    console.debug('Now will check for canvas ref')
     if (!canvas) return { cleanup: () => {} }
-    console.debug('Worker and audio node is going to be initialized')
     const worker = getOrCreateWorkerAndCanvas(canvas)
     const audioNode = await setupAudioPlayback(new AudioContext({ sampleRate: 48000 }))
-    console.debug('Worker and audio node initialized')
 
     handleWorkerMessages(worker, audioNode, videoTelemetry, audioTelemetry)
 
@@ -1625,16 +1604,22 @@ export function onlyUseVideoSubscriber(
   videoTrackAlias: number,
   videoFullTrackName: FullTrackName,
   videoTelemetry?: NetworkTelemetry,
+  onFirstFrame?: () => void,
 ) {
   const setup = async (): Promise<{ videoRequestId?: bigint; cleanup: () => void }> => {
     const canvas = canvasRef.current
-    console.debug('Setting up video-only subscription')
     if (!canvas) return { cleanup: () => {} }
-
     const worker = getOrCreateWorkerAndCanvas(canvas)
+    let firstFrameReceived = false
 
     worker.onmessage = (event) => {
       if (event.data.type === 'video-telemetry') {
+        // Track first frame
+        if (!firstFrameReceived && onFirstFrame) {
+          firstFrameReceived = true
+          onFirstFrame()
+        }
+
         if (videoTelemetry) {
           videoTelemetry.push({
             latency: Math.abs(event.data.latency),
@@ -1657,14 +1642,10 @@ export function onlyUseVideoSubscriber(
       worker,
       'moq',
     )
-    console.debug('Subscribed to video only', videoFullTrackName, 'with requestId:', videoRequestId)
 
     return {
       videoRequestId,
-      cleanup: () => {
-        // ! Do not terminate the worker
-        console.debug('Video-only subscription cleanup called')
-      },
+      cleanup: () => {},
     }
   }
   return setup
@@ -1707,13 +1688,10 @@ export function onlyUseVideoHDSubscriber(
       worker,
       'moq',
     )
-    console.debug('Subscribed to HD video only', videoHDFullTrackName, 'with requestId:', videoRequestId)
 
     return {
       videoRequestId,
-      cleanup: () => {
-        console.debug('HD Video-only subscription cleanup called')
-      },
+      cleanup: () => {},
     }
   }
   return setup
@@ -1728,7 +1706,6 @@ export function onlyUseScreenshareSubscriber(
 ) {
   const setup = async (): Promise<{ videoRequestId?: bigint; cleanup: () => void }> => {
     const canvas = canvasRef.current
-    console.debug('Setting up screenshare-only subscription')
     if (!canvas) return { cleanup: () => {} }
 
     const worker = getOrCreateScreenshareWorker(canvas)
@@ -1757,13 +1734,11 @@ export function onlyUseScreenshareSubscriber(
       worker,
       'moq',
     )
-    console.debug('Subscribed to screenshare only', screenshareFullTrackName, 'with requestId:', videoRequestId)
 
     return {
       videoRequestId,
       cleanup: () => {
-        // ! Do not terminate the worker
-        console.debug('Screenshare-only subscription cleanup called')
+        //! Do not terminate the worker
       },
     }
   }
@@ -1775,18 +1750,24 @@ export function onlyUseAudioSubscriber(
   audioTrackAlias: number,
   audioFullTrackName: FullTrackName,
   audioTelemetry?: NetworkTelemetry,
+  onFirstFrame?: () => void,
 ) {
   const setup = async (): Promise<{ audioRequestId?: bigint; cleanup: () => void }> => {
-    console.debug('Setting up audio-only subscription')
-
     const worker = new DecodeWorker()
     worker.postMessage({ type: 'init-audio-only', decoderConfig: window.appSettings.audioDecoderConfig })
 
     const audioNode = await setupAudioPlayback(new AudioContext({ sampleRate: 48000 }))
-    console.debug('Audio node initialized')
+
+    let firstFrameReceived = false
 
     worker.onmessage = (event) => {
       if (event.data.type === 'audio') {
+        // Track first audio frame
+        if (!firstFrameReceived && onFirstFrame) {
+          firstFrameReceived = true
+          onFirstFrame()
+        }
+
         audioNode.port.postMessage(new Float32Array(event.data.samples))
       }
       if (event.data.type === 'audio-telemetry') {
@@ -1812,13 +1793,11 @@ export function onlyUseAudioSubscriber(
       worker,
       'moq-audio',
     )
-    console.debug('Subscribed to audio only', audioFullTrackName, 'with requestId:', audioRequestId)
 
     return {
       audioRequestId,
       cleanup: () => {
         // ! Do not terminate the worker
-        console.debug('Audio-only subscription cleanup called')
       },
     }
   }
@@ -1852,7 +1831,6 @@ export async function subscribeToChatTrack({
         ;(async () => {
           while (true) {
             const { done, value: obj } = await reader.read()
-            console.debug('Received chat object:', obj?.location?.group?.toString(), obj?.location?.object?.toString())
             if (done) break
             if (!obj.payload) {
               console.warn('Received MoqtObject without payload, skipping:', obj)
@@ -1861,7 +1839,6 @@ export async function subscribeToChatTrack({
             try {
               const decoded = new TextDecoder().decode(obj.payload)
               const msgObj = JSON.parse(decoded)
-              console.debug('Decoded chat message:', msgObj)
               onMessage(msgObj)
             } catch (e) {
               console.error('Failed to decode chat message', e)

@@ -92,7 +92,7 @@ export class TestMetricsManager {
   trackStartupFirstFrame(participantId: string, participantName: string, hasCam: boolean) {
     const startTime = this.startupTrackingMap.get(participantId)
     if (!startTime) {
-      console.warn(`[Startup] No start time found for participant: ${participantId}`)
+      console.log(`[Startup] No start time found for participant: ${participantId}`)
       return
     }
 
@@ -110,7 +110,7 @@ export class TestMetricsManager {
       notes: hasCam ? `First frame rendered` : 'N/A - Camera off',
     }
 
-    console.error('[StartupLatency for first rendered frame]', metric.duration, 'ms')
+    console.log('StartupLatency: ', metric.duration, 'ms')
     this.startupTrackingMap.delete(participantId)
   }
 
@@ -123,7 +123,6 @@ export class TestMetricsManager {
   trackQualityToggleComplete(participantId: string, participantName: string) {
     const tracking = this.qualityToggleTrackingMap.get(participantId)
     if (!tracking) {
-      console.warn(`[Quality Toggle] No tracking data found for participant: ${participantId}`)
       return
     }
 
@@ -142,10 +141,10 @@ export class TestMetricsManager {
     }
 
     if (tracking.direction === 'HD->SD') {
-      console.error('[HD->SD Toggle]', metric.duration, 'ms')
+      console.log('HD->SD Toggle: ', metric.duration, 'ms')
     }
     if (tracking.direction === 'SD->HD') {
-      console.error('[SD->HD Toggle]', metric.duration, 'ms')
+      console.log('SD->HD Toggle: ', metric.duration, 'ms')
     }
     this.qualityToggleTrackingMap.delete(participantId)
   }
@@ -175,7 +174,7 @@ export class TestMetricsManager {
     }
 
     // Log Rewind Latency
-    console.error('[Rewind Latency]', metric.time - tracking?.rewindButtonPressed!, 'ms')
+    console.log('Rewind Latency: ', metric.time - tracking?.rewindButtonPressed!, 'ms')
 
     if (tracking) {
       this.rewindTrackingMap.set(participantId, { ...tracking, rewindPlaybackStarted: time })
@@ -210,7 +209,7 @@ export class TestMetricsManager {
       const { videoResub, ...rest } = tracking
       this.subscriptionTrackingMap.set(participantId, rest)
 
-      console.error(`[VIDEO RESUBSCRIPTION LATENCY]for ${participantName}: ${metric.duration}ms`)
+      console.log(`Video Resubcription Latency for ${participantName}: ${metric.duration}ms`)
     }
   }
 
@@ -243,7 +242,7 @@ export class TestMetricsManager {
       const { audioResub, ...rest } = tracking
       this.subscriptionTrackingMap.set(participantId, rest)
 
-      console.error(`[AUDIO RESUBSCRIPTION LATENCY]for ${participantName}: ${metric.duration}ms`)
+      console.log(`Audio Resubcription Latency for ${participantName}: ${metric.duration}ms`)
     }
   }
 }
