@@ -69,7 +69,7 @@ export class RewindBuffer {
         type,
       })
 
-      console.log(`RewindBuffer: Added ${type} object`, {
+      console.debug(`RewindBuffer: Added ${type} object`, {
         trackName: object.fullTrackName,
         group: object.location.group.toString(),
         objectId: object.location.object.toString(),
@@ -130,7 +130,7 @@ export class RewindBuffer {
     const afterCount = this.buffer.length
 
     if (beforeCount !== afterCount) {
-      console.log(
+      console.debug(
         `RewindBuffer: Cleaned up ${beforeCount - afterCount} old objects, keeping ${afterCount} objects in buffer`,
       )
     }
@@ -172,9 +172,9 @@ export class RewindBuffer {
     const videoObjects = this.getVideoObjects().sort((a, b) => a.object.location.compare(b.object.location))
     let index = 0
 
-    console.log(`RewindBuffer: Creating video stream with ${videoObjects.length} objects`)
+    console.debug(`RewindBuffer: Creating video stream with ${videoObjects.length} objects`)
     if (videoObjects.length > 0) {
-      console.log('RewindBuffer: Video stream range:', {
+      console.debug('RewindBuffer: Video stream range:', {
         firstGroup: videoObjects[0].object.location.group.toString(),
         firstObject: videoObjects[0].object.location.object.toString(),
         lastGroup: videoObjects[videoObjects.length - 1].object.location.group.toString(),
@@ -185,13 +185,13 @@ export class RewindBuffer {
     return new ReadableStream<MoqtObject>({
       pull(controller) {
         if (index >= videoObjects.length) {
-          console.log('RewindBuffer: Video stream completed, all objects delivered')
+          console.debug('RewindBuffer: Video stream completed, all objects delivered')
           controller.close()
           return
         }
 
         const obj = videoObjects[index].object
-        console.log(
+        console.debug(
           `RewindBuffer: Delivering video object ${index + 1}/${videoObjects.length} - Group: ${obj.location.group.toString()}, Object: ${obj.location.object.toString()}`,
         )
         controller.enqueue(obj)
@@ -206,9 +206,9 @@ export class RewindBuffer {
     const audioObjects = this.getAudioObjects().sort((a, b) => a.object.location.compare(b.object.location))
     let index = 0
 
-    console.log(`RewindBuffer: Creating audio stream with ${audioObjects.length} objects`)
+    console.debug(`RewindBuffer: Creating audio stream with ${audioObjects.length} objects`)
     if (audioObjects.length > 0) {
-      console.log('RewindBuffer: Audio stream range:', {
+      console.debug('RewindBuffer: Audio stream range:', {
         firstGroup: audioObjects[0].object.location.group.toString(),
         firstObject: audioObjects[0].object.location.object.toString(),
         lastGroup: audioObjects[audioObjects.length - 1].object.location.group.toString(),
@@ -219,13 +219,13 @@ export class RewindBuffer {
     return new ReadableStream<MoqtObject>({
       pull(controller) {
         if (index >= audioObjects.length) {
-          console.log('RewindBuffer: Audio stream completed, all objects delivered')
+          console.debug('RewindBuffer: Audio stream completed, all objects delivered')
           controller.close()
           return
         }
 
         const obj = audioObjects[index].object
-        console.log(
+        console.debug(
           `RewindBuffer: Delivering audio object ${index + 1}/${audioObjects.length} - Group: ${obj.location.group.toString()}, Object: ${obj.location.object.toString()}`,
         )
         controller.enqueue(obj)

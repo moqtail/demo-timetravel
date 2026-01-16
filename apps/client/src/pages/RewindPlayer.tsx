@@ -29,6 +29,7 @@ interface RewindPlayerProps {
   audioObjects: BufferedMoqtObject[]
   userName: string
   userColor: string
+  onPlaybackStarted?: () => void
 }
 
 export const RewindPlayer: React.FC<RewindPlayerProps> = ({
@@ -38,6 +39,7 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
   audioObjects,
   userName,
   userColor,
+  onPlaybackStarted,
 }) => {
   const canvasContainerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -49,6 +51,7 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
+  const [shouldAutoPlay, setShouldAutoPlay] = useState(false)
   const playbackStartTimeRef = useRef<number>(0)
 
   // PlayoutBuffer instances for proper MOQ object timing (custom VoD approach)
@@ -74,15 +77,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
         // Create RewindBuffer and populate it with the provided objects
         const rewindBuffer = new RewindBuffer(30000) // 30 seconds rolling window, no object limit
 
-        // Add all video and audio objects to the buffer
-        console.log(
-          'RewindPlayer: Populating rewind buffer with',
-          videoObjects.length,
-          'video and',
-          audioObjects.length,
-          'audio objects',
-        )
-
         videoObjects.forEach((bufferedObj) => {
           rewindBuffer.addObject(bufferedObj.object, 'video')
         })
@@ -100,7 +94,7 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
             // Filter out video objects with empty or missing payloads
             const hasValidPayload = bufferedObj.object.payload && bufferedObj.object.payload.length > 0
             if (!hasValidPayload) {
-              console.log(
+              console.warn(
                 'RewindPlayer: Filtering out empty video object - Group:',
                 bufferedObj.object.location.group.toString(),
                 'Object:',
@@ -122,7 +116,7 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
             // Filter out audio objects with empty or missing payloads
             const hasValidPayload = bufferedObj.object.payload && bufferedObj.object.payload.length > 50
             if (!hasValidPayload) {
-              console.log(
+              console.warn(
                 'RewindPlayer: Filtering out empty audio object - Group:',
                 bufferedObj.object.location.group.toString(),
                 'Object:',
@@ -138,48 +132,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
             return Number(a.object.location.object - b.object.location.object)
           })
           .map((bufferedObj) => bufferedObj.object)
-
-        console.log(
-          'RewindPlayer: Prepared objects for VoD playback - Video:',
-          videoObjectsToPlay.length,
-          'Audio:',
-          audioObjectsToPlay.length,
-        )
-        console.log('RewindPlayer: Original counts - Video:', videoObjects.length, 'Audio:', audioObjects.length)
-
-        if (videoObjectsToPlay.length > 0) {
-          console.log(
-            'RewindPlayer: Video range - First:',
-            {
-              group: videoObjectsToPlay[0].location.group.toString(),
-              object: videoObjectsToPlay[0].location.object.toString(),
-              payloadSize: videoObjectsToPlay[0].payload?.length || 0,
-            },
-            'Last:',
-            {
-              group: videoObjectsToPlay[videoObjectsToPlay.length - 1].location.group.toString(),
-              object: videoObjectsToPlay[videoObjectsToPlay.length - 1].location.object.toString(),
-              payloadSize: videoObjectsToPlay[videoObjectsToPlay.length - 1].payload?.length || 0,
-            },
-          )
-        }
-
-        if (audioObjectsToPlay.length > 0) {
-          console.log(
-            'RewindPlayer: Audio range - First:',
-            {
-              group: audioObjectsToPlay[0].location.group.toString(),
-              object: audioObjectsToPlay[0].location.object.toString(),
-              payloadSize: audioObjectsToPlay[0].payload?.length || 0,
-            },
-            'Last:',
-            {
-              group: audioObjectsToPlay[audioObjectsToPlay.length - 1].location.group.toString(),
-              object: audioObjectsToPlay[audioObjectsToPlay.length - 1].location.object.toString(),
-              payloadSize: audioObjectsToPlay[audioObjectsToPlay.length - 1].payload?.length || 0,
-            },
-          )
-        }
 
         // Store the objects for custom VoD playback
         rewindBufferRef.current = rewindBuffer
@@ -204,20 +156,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
           }
         })
 
-        console.log(
-          'RewindPlayer: Group alignment - Video groups:',
-          Array.from(videoGroups.keys()).slice(0, 5),
-          'Audio groups:',
-          Array.from(audioGroups.keys()).slice(0, 5),
-        )
-
-        console.log('RewindPlayer: Total buffer contents:', {
-          totalObjects: rewindBuffer.getCount(),
-          videObjectCount: rewindBuffer.getVideoObjects().length,
-          audioObjectCount: rewindBuffer.getAudioObjects().length,
-          bufferDurationMs: rewindBuffer.getDurationMs(),
-        })
-
         // Create a completely new canvas element for rewind playback
         if (canvasContainerRef.current && !canvasRef.current) {
           const canvas = document.createElement('canvas')
@@ -231,14 +169,10 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
 
           canvasContainerRef.current.appendChild(canvas)
           canvasRef.current = canvas
-
-          console.log('RewindPlayer: Created new dedicated canvas element')
         }
 
         // Initialize worker with dedicated canvas
         if (canvasRef.current && !workerRef.current) {
-          console.log('RewindPlayer: Initializing dedicated worker and canvas')
-
           const worker = new RewindDecoderWorker()
 
           // Transfer control of our dedicated canvas to worker
@@ -256,18 +190,11 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
 
           // Handle worker messages
           worker.onmessage = (event) => {
-            console.log('RewindPlayer: Received message from worker:', event.data.type)
             if (event.data.type === 'audio') {
               // Only handle audio if we're currently playing and audio is connected
               if (audioNodeRef.current && isPlayingRef.current) {
                 audioNodeRef.current.port.postMessage(new Float32Array(event.data.samples))
               }
-            }
-            if (event.data.type === 'initialized') {
-              console.log('RewindPlayer: Worker fully initialized')
-            }
-            if (event.data.type === 'frame-decoded') {
-              console.log('RewindPlayer: Frame decoded and drawn')
             }
             if (event.data.type === 'error') {
               console.error('RewindPlayer: Worker error:', event.data.message)
@@ -277,7 +204,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
 
         // Initialize dedicated audio context for rewind
         if (!audioContextRef.current) {
-          console.log('RewindPlayer: Initializing dedicated audio context')
           const audioContext = new AudioContext({ sampleRate: 48000 })
 
           // Use a different worklet processor name to avoid conflicts with live pipeline
@@ -290,24 +216,15 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
           // We'll connect/disconnect based on playback state
           audioContextRef.current = audioContext
           audioNodeRef.current = audioNode
-          console.log('RewindPlayer: Dedicated audio context initialized with separate processor')
         }
 
         // Calculate duration from the buffer
         if (rewindBufferRef.current && rewindBufferRef.current.getCount() > 0) {
           const durationMs = rewindBufferRef.current.getDurationMs()
-          console.log(
-            'RewindPlayer: Buffer duration:',
-            durationMs,
-            'ms, object count:',
-            rewindBufferRef.current.getCount(),
-          )
           setDuration(durationMs)
-
-          // Don't auto-start playback - let user control when to play
-          console.log('RewindPlayer: Ready for manual playback control')
+          setShouldAutoPlay(true)
         } else {
-          console.log('RewindPlayer: No objects in rewind buffer')
+          console.warn('RewindPlayer: No objects in rewind buffer')
         }
 
         // Mark as initialized
@@ -321,8 +238,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
   }, [isOpen]) // Only re-run when isOpen changes
 
   const cleanupRewindPlayer = async () => {
-    console.log('RewindPlayer: Starting MANUAL cleanup process (user-initiated)')
-
     // Stop playback first
     setIsPlaying(false)
     isPlayingRef.current = false
@@ -330,7 +245,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
     // Disconnect audio BEFORE closing context to avoid interference
     if (audioNodeRef.current) {
       try {
-        console.log('RewindPlayer: Disconnecting rewind audio node')
         audioNodeRef.current.disconnect()
         audioNodeRef.current = null
       } catch (e) {
@@ -352,7 +266,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
     // Terminate worker BEFORE closing audio context - but only on manual cleanup
     if (workerRef.current) {
       try {
-        console.log('RewindPlayer: Terminating rewind worker (manual cleanup)')
         workerRef.current.terminate()
         workerRef.current = null
       } catch (e) {
@@ -379,12 +292,10 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
       setTimeout(async () => {
         try {
           if (contextToClose.state !== 'closed') {
-            console.log('RewindPlayer: Closing rewind audio context (manual cleanup)')
             await contextToClose.close()
-            console.log('RewindPlayer: Rewind audio context closed successfully')
           }
         } catch (e) {
-          console.warn('RewindPlayer: Error closing audio context (non-critical):', e)
+          console.warn('RewindPlayer: Error closing audio context:', e)
         }
       }, 150) // Longer delay for manual cleanup
     }
@@ -393,8 +304,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
     initializedRef.current = false
     setCurrentTime(0)
     setDuration(0)
-
-    console.log('RewindPlayer: Manual cleanup completed - live pipeline preserved')
   }
 
   useEffect(() => {
@@ -406,8 +315,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
 
   // Lightweight cleanup for natural playback end - preserves live pipeline
   const handleNaturalEnd = () => {
-    console.log('RewindPlayer: Handling natural end of playback')
-
     setIsPlaying(false)
     isPlayingRef.current = false
 
@@ -421,7 +328,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
     if (audioNodeRef.current) {
       try {
         audioNodeRef.current.disconnect()
-        console.log('RewindPlayer: Audio disconnected on natural end')
       } catch (e) {
         console.warn('RewindPlayer: Error disconnecting audio on natural end:', e)
       }
@@ -429,38 +335,23 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
 
     // Reset playback position but keep everything else intact
     setCurrentTime(0)
-
-    console.log('RewindPlayer: Natural end handled - ready for replay, live pipeline preserved')
   }
 
   // Custom VoD playback with proper audio/video timing alignment
   const startVoDPlayback = () => {
     if (!videoPlayoutBufferRef.current || !audioPlayoutBufferRef.current || !workerRef.current) {
-      console.log('RewindPlayer: VoD buffers or worker not ready')
       return
     }
-
-    console.log('RewindPlayer: Starting proper audio/video aligned playback')
 
     let videoIndex = 0
     let audioIndex = 0
     const videoObjects = videoPlayoutBufferRef.current.objects
     const audioObjects = audioPlayoutBufferRef.current.objects
 
-    console.log(
-      'RewindPlayer: Starting playback with',
-      videoObjects.length,
-      'video objects and',
-      audioObjects.length,
-      'audio objects',
-    )
-
     // Video timing: ~30fps (33ms per frame)
     const videoInterval = 33
     // Audio timing: much faster (~20ms, audio packets are more frequent)
     const audioInterval = 20
-
-    console.log('RewindPlayer: Using natural intervals - Video:', videoInterval, 'ms, Audio:', audioInterval, 'ms')
 
     const startTime = Date.now()
     let lastVideoTime = startTime
@@ -476,10 +367,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
       // Video delivery logic - deliver one frame every ~33ms
       if (now - lastVideoTime >= videoInterval && videoIndex < videoObjects.length) {
         const videoObj = videoObjects[videoIndex]
-
-        console.log(
-          `RewindPlayer: Delivering video frame ${videoIndex + 1}/${videoObjects.length} - Group: ${videoObj.location.group.toString()}, Object: ${videoObj.location.object.toString()}`,
-        )
 
         try {
           const payloadCopy = videoObj.payload ? new Uint8Array(videoObj.payload) : new Uint8Array(0)
@@ -506,17 +393,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
       if (now - lastAudioTime >= audioInterval && audioIndex < audioObjects.length) {
         const audioObj = audioObjects[audioIndex]
 
-        // Debug: Show current video position for alignment reference
-        const currentVideoObj = videoIndex < videoObjects.length ? videoObjects[videoIndex] : null
-        console.log(
-          `RewindPlayer: Delivering audio packet ${audioIndex + 1}/${audioObjects.length} - Group: ${audioObj.location.group.toString()}, Object: ${audioObj.location.object.toString()}, Size: ${audioObj.payload?.length || 0}`,
-        )
-        if (currentVideoObj) {
-          console.log(
-            `RewindPlayer: Current video position - Group: ${currentVideoObj.location.group.toString()}, Object: ${currentVideoObj.location.object.toString()}`,
-          )
-        }
-
         try {
           const payloadCopy = audioObj.payload ? new Uint8Array(audioObj.payload) : new Uint8Array(0)
           const extensionHeaders = audioObj.extensionHeaders || []
@@ -541,7 +417,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
 
       // Check if both streams are exhausted
       if (videoIndex >= videoObjects.length && audioIndex >= audioObjects.length) {
-        console.log('RewindPlayer: Both video and audio streams completed naturally')
         handleNaturalEnd()
         return
       }
@@ -554,7 +429,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
   const handlePlay = () => {
     if (isPlaying) {
       // Pause
-      console.log('RewindPlayer: Pausing playback')
       setIsPlaying(false)
       isPlayingRef.current = false
 
@@ -568,14 +442,12 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
       if (audioNodeRef.current) {
         try {
           audioNodeRef.current.disconnect()
-          console.log('RewindPlayer: Audio disconnected on pause')
         } catch (e) {
           console.warn('RewindPlayer: Error disconnecting audio:', e)
         }
       }
     } else {
       // Play
-      console.log('RewindPlayer: Starting playback')
 
       // Ensure we have the necessary components
       if (!videoPlayoutBufferRef.current || !audioPlayoutBufferRef.current || !workerRef.current) {
@@ -594,7 +466,7 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
             audioContextRef.current
               .resume()
               .then(() => {
-                console.log('RewindPlayer: Audio context resumed')
+                console.debug('RewindPlayer: Audio context resumed')
               })
               .catch((e) => {
                 console.warn('RewindPlayer: Error resuming audio context:', e)
@@ -602,7 +474,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
           }
 
           audioNodeRef.current.connect(audioContextRef.current.destination)
-          console.log('RewindPlayer: Audio connected for immediate playback')
         } catch (e) {
           console.warn('RewindPlayer: Error connecting audio:', e)
         }
@@ -611,6 +482,11 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
       setIsPlaying(true)
       isPlayingRef.current = true
       playbackStartTimeRef.current = Date.now() - currentTime * 1000
+
+      // Notify parent that playback started
+      if (onPlaybackStarted) {
+        onPlaybackStarted()
+      }
 
       // Start custom VoD playback with synchronized timing
       startVoDPlayback()
@@ -628,9 +504,19 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
     }
   }
 
-  const handleRewind = async () => {
-    console.log('RewindPlayer: Rewinding to beginning')
+  // Auto-play effect - trigger playback after initialization
+  useEffect(() => {
+    if (shouldAutoPlay && !isPlaying && initializedRef.current) {
+      setShouldAutoPlay(false)
 
+      // Small delay to ensure everything is ready
+      setTimeout(() => {
+        handlePlay()
+      }, 100)
+    }
+  }, [shouldAutoPlay, isPlaying])
+
+  const handleRewind = async () => {
     setCurrentTime(0)
     setIsPlaying(false)
     isPlayingRef.current = false
@@ -645,7 +531,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
     if (audioNodeRef.current) {
       try {
         audioNodeRef.current.disconnect()
-        console.log('RewindPlayer: Audio disconnected during rewind')
       } catch (e) {
         console.warn('RewindPlayer: Error disconnecting audio during rewind:', e)
       }
@@ -659,7 +544,7 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
       audioPlayoutBufferRef.current.currentIndex = 0
     }
 
-    console.log('RewindPlayer: Reset to beginning - VoD buffers ready for replay')
+    console.warn('RewindPlayer: Reset to beginning - VoD buffers ready for replay')
   }
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -670,7 +555,6 @@ export const RewindPlayer: React.FC<RewindPlayerProps> = ({
 
     // For now, seeking will reset to beginning due to MOQ object ordering complexity
     // TODO: Implement proper seeking by filtering objects based on timestamp
-    console.log('RewindPlayer: Seek requested to:', newTime, 'ms - resetting to beginning for now')
     handleRewind()
 
     if (isPlaying) {

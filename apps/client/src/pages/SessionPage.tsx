@@ -74,6 +74,7 @@ import { MOQtailClient } from 'moqtail-ts/client'
 import { NetworkTelemetry, ClockNormalizer } from 'moqtail-ts/util'
 import { RewindPlayer } from './RewindPlayer'
 import { BufferedMoqtObject } from '@/composables/rewindBuffer'
+import { TestMetricsManager } from '@/util/testMetrics'
 
 function SessionPage() {
   // initialize the MOQTail client
@@ -95,7 +96,7 @@ function SessionPage() {
   const [hasLocalAudio, setHasLocalAudio] = useState<boolean>(false)
   const [isCamOn, setisCamOn] = useState(false)
   const [isScreenSharing, setIsScreenSharing] = useState(false)
-  const [isChatOpen, setIsChatOpen] = useState(true) // TODO: implement MoQ chat
+  const [isChatOpen, setIsChatOpen] = useState(true)
   const [chatMessage, setChatMessage] = useState('')
   const { socket: contextSocket } = useSocket()
   const [users, setUsers] = useState<{ [K: string]: RoomUser }>({})
@@ -105,10 +106,20 @@ function SessionPage() {
   }>({})
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [telemetryData, setTelemetryData] = useState<{
-    [userId: string]: { latency: number; videoBitrate: number; audioBitrate: number }
+    [userId: string]: {
+      videoLatency: number
+      audioLatency: number
+      screenshareLatency: number
+      videoBitrate: number
+      audioBitrate: number
+    }
   }>({})
-  const telemetryInstances = useRef<{ [userId: string]: { video: NetworkTelemetry; audio: NetworkTelemetry } }>({})
-  const [latencyHistory, setLatencyHistory] = useState<{ [userId: string]: number[] }>({})
+  const telemetryInstances = useRef<{
+    [userId: string]: { video: NetworkTelemetry; audio: NetworkTelemetry; screenshare: NetworkTelemetry }
+  }>({})
+  const [videoLatencyHistory, setVideoLatencyHistory] = useState<{ [userId: string]: number[] }>({})
+  const [audioLatencyHistory, setAudioLatencyHistory] = useState<{ [userId: string]: number[] }>({})
+  const [screenshareLatencyHistory, setScreenshareLatencyHistory] = useState<{ [userId: string]: number[] }>({})
   const [videoBitrateHistory, setVideoBitrateHistory] = useState<{ [userId: string]: number[] }>({})
   const [audioBitrateHistory, setAudioBitrateHistory] = useState<{ [userId: string]: number[] }>({})
   const [timeRemaining, setTimeRemaining] = useState<string>('--:--')
@@ -208,6 +219,11 @@ function SessionPage() {
     null,
   )
   const [pendingHDRequests, setPendingHDRequests] = useState<Set<string>>(new Set())
+
+  // Test Metrics Manager
+  const testMetricsManagerRef = useRef<TestMetricsManager>(new TestMetricsManager())
+  const startupLatencyTracked = useRef<boolean>(false)
+
   useEffect(() => {
     userVideoQualitiesRef.current = userVideoQualities
   }, [userVideoQualities])
@@ -328,11 +344,16 @@ function SessionPage() {
   // Rewind functionality
   const handleOpenRewindPlayer = async (userId: string) => {
     if (isFetching) {
-      console.log('Already fetching rewind data, please wait...')
+      console.warn('Fetch in progress')
       return
     }
 
-    console.log('Fetching rewind data for user:', userId)
+    // Track rewind button pressed
+    const user = users[userId]
+    if (user) {
+      testMetricsManagerRef.current.trackRewindButtonPressed(userId)
+    }
+
     setIsFetching(true)
 
     try {
@@ -343,10 +364,6 @@ function SessionPage() {
 
       const videoObjects: BufferedMoqtObject[] = []
       const audioObjects: BufferedMoqtObject[] = []
-
-      // Fetch video track
-      const videoTrackName = getTrackname(roomState.name, userId, 'video')
-      console.log('Fetching video track:', videoTrackName.toString())
 
       /*
       const videoResult = await moqClient.fetch({
@@ -364,13 +381,12 @@ function SessionPage() {
       */
       // get request id from the video track subscription. If the viewer is HD-subscribed
       // and no SD request id exists, create a temporary SD subscription (no canvas/worker)
-      console.log('userSubscriptions', userSubscriptions)
       let videoRequestId = userSubscriptions[userId]?.videoRequestId
 
       const isHDSubscribed = !!userSubscriptions[userId]?.videoHDSubscribed
 
       if (videoRequestId === undefined && isHDSubscribed) {
-        console.log('No SD request id while HD subscribed - creating temporary SD subscription for rewind')
+        console.warn('No SD request id while HD subscribed - creating temporary SD subscription for rewind')
         // create a silent SD subscription using subscribeOnlyVideo
         const canvasRef = remoteCanvasRefs[userId]
         if (!roomState) {
@@ -411,12 +427,6 @@ function SessionPage() {
         return
       }
 
-      console.log('SessionPage: About to fetch video with joiningRequestId:', videoRequestId)
-      console.log('SessionPage: Using rewind fetch group size:', rewindFetchGroupSize)
-      console.log(
-        'SessionPage: All moqClient requestIds before video fetch:',
-        moqClient ? Array.from(moqClient.requests.keys()) : 'no client',
-      )
       const videoResult = await moqClient.fetch({
         priority: 0,
         groupOrder: GroupOrder.Original,
@@ -431,7 +441,6 @@ function SessionPage() {
 
       if (!(videoResult instanceof FetchError)) {
         const reader = videoResult.stream.getReader()
-        console.log('Reading video objects from fetch stream...')
 
         try {
           while (true) {
@@ -444,11 +453,6 @@ function SessionPage() {
                 timestamp: Date.now(),
                 type: 'video',
               })
-              console.log('Fetched video object:', {
-                group: value.location.group.toString(),
-                object: value.location.object.toString(),
-                payloadSize: value.payload.length,
-              })
             }
           }
         } finally {
@@ -458,9 +462,7 @@ function SessionPage() {
         console.warn('Video fetch failed or returned error:', videoResult)
       }
 
-      console.log('Skipping audio fetch to avoid AV sync issues during demo')
-
-      console.log(`Fetch complete for user ${userId}: ${videoObjects.length} video objects (audio skipped for demo)`)
+      console.warn('Skipping audio fetch to avoid AV sync issues during demo')
 
       setFetchedRewindData((prev) => ({
         ...prev,
@@ -470,6 +472,11 @@ function SessionPage() {
       if (videoObjects.length > 0) {
         setSelectedRewindUserId(userId)
         setIsRewindPlayerOpen(true)
+
+        // Auto-start playback after a short delay to ensure player is initialized
+        setTimeout(() => {
+          // The RewindPlayer will handle auto-start via a new prop
+        }, 250)
       } else {
         console.warn('No video data available for user:', userId)
       }
@@ -481,7 +488,6 @@ function SessionPage() {
   }
 
   const handleCloseRewindPlayer = () => {
-    console.log('SessionPage: Closing rewind player')
     isRewindCleaningUp.current = true
 
     // Clear the fetched rewind data for the selected user
@@ -489,7 +495,6 @@ function SessionPage() {
       setFetchedRewindData((prev) => {
         const updated = { ...prev }
         delete updated[selectedRewindUserId]
-        console.log(`Cleared fetched rewind data for user: ${selectedRewindUserId}`)
         return updated
       })
     }
@@ -500,7 +505,6 @@ function SessionPage() {
     // If we created a temporary SD subscription for this user, clean it up now
     const tempSub = tempSDSubscriptionsRef.current[selectedRewindUserId]
     if (tempSub) {
-      console.log('Cleaning up temporary SD subscription for', selectedRewindUserId)
       tempSub.cleanup()
       delete tempSDSubscriptionsRef.current[selectedRewindUserId]
       // Clear subscription state if it was only temporary
@@ -519,7 +523,6 @@ function SessionPage() {
 
     // Add a delay to ensure rewind player cleanup is complete
     setTimeout(() => {
-      console.log('SessionPage: Rewind player cleanup complete')
       isRewindCleaningUp.current = false
     }, 500)
   }
@@ -598,7 +601,7 @@ function SessionPage() {
   const handleToggle = (kind: 'mic' | 'cam') => {
     // Don't allow toggles while rewind player is cleaning up
     if (isRewindCleaningUp.current) {
-      console.log('Rewind player is cleaning up, ignoring toggle request')
+      console.warn('Rewind player is cleaning up, ignoring toggle request')
       return
     }
 
@@ -639,7 +642,6 @@ function SessionPage() {
                 videoEncoderObjRef.current.offset = offsetRef.current
                 videoEncoderObjRef.current.start(selfMediaStream.current)
               }
-              //TODO: HOW TO CONTINUE HD VIDEO ENCODER
               if (videoHDEncoderObjRef.current) {
                 videoHDEncoderObjRef.current.offset = offsetRef.current
                 videoHDEncoderObjRef.current.start(selfMediaStream.current)
@@ -663,7 +665,6 @@ function SessionPage() {
             if (videoEncoderObjRef.current) {
               videoEncoderObjRef.current.stop()
             }
-            //TODO: HOW TO STOP HD VIDEO ENCODER
             if (videoHDEncoderObjRef.current) {
               videoHDEncoderObjRef.current.stop()
             }
@@ -746,17 +747,19 @@ function SessionPage() {
       return
     }
 
-    console.log(`Transitioning ${targetUserId} from ${currentQuality} to ${newQuality}`)
+    console.debug(`Transitioning ${targetUserId} from ${currentQuality} to ${newQuality}`)
     manualQualityTransitionsRef.current.add(targetUserId)
+
+    // Track quality toggle start
+    const direction = currentQuality === 'HD' && newQuality === 'SD' ? 'HD->SD' : 'SD->HD'
+    testMetricsManagerRef.current.trackQualityToggleStart(targetUserId, direction)
 
     try {
       if (currentQuality === 'HD' && newQuality === 'SD') {
-        console.log('Unsubscribing from HD video')
         hdSubscriptionAttemptsRef.current.delete(targetUserId)
         await unsubscribeFromHDVideo(targetUserId)
         await new Promise((resolve) => setTimeout(resolve, 500))
       } else if (currentQuality === 'SD' && newQuality === 'HD') {
-        console.log('Unsubscribing from SD video')
         hdSubscriptionAttemptsRef.current.delete(targetUserId)
         await unsubscribeFromUser(targetUserId, 'video')
         await new Promise((resolve) => setTimeout(resolve, 500))
@@ -767,17 +770,14 @@ function SessionPage() {
           targetUserId,
           requesterId: userId,
         })
-        console.log(`Sent HD video request to user ${targetUserId}`)
       } else {
         contextSocket?.emit('request-sd-video', {
           targetUserId,
           requesterId: userId,
         })
-        console.log(`Sent SD video request to user ${targetUserId}`)
 
         const success = await subscribeToSDVideo(targetUserId)
         if (success) {
-          console.log(`Successfully switched to SD video for ${targetUserId}`)
         } else {
           console.error(`Failed to switch to SD video for ${targetUserId}`)
         }
@@ -808,12 +808,9 @@ function SessionPage() {
 
     if (currentQuality === 'HD') {
       // HD to SD: Direct transition, no permission needed
-      console.log(`Switching from HD to SD for ${targetUserId}`)
+      console.debug(`Switching from HD to SD for ${targetUserId}`)
       await handleQualityTransition(targetUserId, 'HD', 'SD')
     } else {
-      // SD to HD: Request permission first
-      console.log(`Requesting HD permission from ${targetUserId}`)
-
       // Add to pending requests
       setPendingHDRequests((prev) => new Set(prev).add(targetUserId))
 
@@ -821,7 +818,6 @@ function SessionPage() {
         targetUserId,
         requesterId: userId,
       })
-      console.log(`Sent HD permission request to user ${targetUserId}`)
       // Wait for permission response - handleQualityTransition will be called based on response
     }
   }
@@ -829,7 +825,6 @@ function SessionPage() {
   // HD Permission Response Functions
   const handleHDPermissionAccept = () => {
     if (hdPermissionRequest && contextSocket) {
-      console.log(`Accepting HD permission request from ${hdPermissionRequest.requesterId}`)
       contextSocket.emit('hd-permission-response', {
         requesterId: hdPermissionRequest.requesterId,
         allowed: true,
@@ -840,7 +835,7 @@ function SessionPage() {
 
   const handleHDPermissionReject = () => {
     if (hdPermissionRequest && contextSocket) {
-      console.log(`Rejecting HD permission request from ${hdPermissionRequest.requesterId}`)
+      console.warn(`Rejecting HD permission request from ${hdPermissionRequest.requesterId}`)
       contextSocket.emit('hd-permission-response', {
         requesterId: hdPermissionRequest.requesterId,
         allowed: false,
@@ -854,8 +849,6 @@ function SessionPage() {
       return
     }
 
-    console.log('Starting HD encoding process...')
-
     setUsers((users) => {
       const u = users[userId]
       users[userId] = { ...u, hasVideoHD: true }
@@ -867,9 +860,6 @@ function SessionPage() {
       const videoHDTrack = roomState.users[userId]?.publishedTracks['video-hd']
 
       if (videoHDTrack && moqClientRef.current) {
-        // TODO: HD Track should be announced only when the user accepts
-        // TODO: Otherwise, SD should continue (the unsub should not happen)
-        console.log('Announcing HD track to server')
         contextSocket?.emit('update-track', { trackType: 'video-hd', event: 'announce' })
 
         if (selfMediaStream.current && tracksRef.current) {
@@ -886,7 +876,6 @@ function SessionPage() {
           if (videoHDEncoderObjRef.current) {
             videoHDEncoderObjRef.current.offset = offsetRef.current
             videoHDEncoderObjRef.current.start(selfMediaStream.current)
-            console.log('HD encoder started successfully')
           }
 
           contextSocket?.emit('update-track', { trackType: 'video-hd', event: 'publish' })
@@ -904,8 +893,6 @@ function SessionPage() {
     }
 
     contextSocket?.emit('toggle-button', { kind: 'cam-hd', value: true })
-
-    console.log('Started HD encoding due to remote request')
   }
 
   const handleStopHDEncoding = () => {
@@ -926,7 +913,7 @@ function SessionPage() {
 
     contextSocket?.emit('toggle-button', { kind: 'cam-hd', value: false })
 
-    console.log('Stopped HD encoding due to remote request')
+    console.warn('Stopped HD encoding due to remote request')
   }
 
   const handleToggleScreenShare = async () => {
@@ -943,8 +930,6 @@ function SessionPage() {
 
         selfScreenshareStream.current = screenStream
 
-        console.log('Screenshare stream tracks:', screenStream.getTracks())
-
         try {
           if (!tracksRef.current) {
             console.error('tracksRef.current is null - cannot start screenshare encoder')
@@ -952,7 +937,6 @@ function SessionPage() {
           }
 
           if (screenshareEncoderObjRef.current) {
-            console.log('Cleaning up previous screenshare encoder')
             try {
               screenshareEncoderObjRef.current.stop()
             } catch (error) {
@@ -962,7 +946,6 @@ function SessionPage() {
           }
 
           const screenshareFullTrackName = getTrackname(roomState!.name, userId, 'screenshare')
-          console.log('screenshareFullTrackName:', screenshareFullTrackName)
 
           const screenshareStreamController = tracksRef.current.getScreenshareStreamController()
 
@@ -973,7 +956,6 @@ function SessionPage() {
             publisherPriority: 1,
             objectForwardingPreference: ObjectForwardingPreference.Subgroup,
           })
-          console.log('screenshareResult:', screenshareResult)
           screenshareEncoderObjRef.current = screenshareResult
 
           const updateTrackRequest: UpdateTrackRequest = {
@@ -981,7 +963,6 @@ function SessionPage() {
             event: 'announce',
           }
           contextSocket?.emit('update-track', updateTrackRequest)
-          console.log('Screenshare track announced to other clients')
         } catch (error) {
           console.error('Failed to start screenshare encoder:', error)
           if (selfScreenshareStream.current) {
@@ -999,8 +980,6 @@ function SessionPage() {
         }))
 
         screenTrack.onended = () => {
-          console.log('Screen track ended - cleaning up screenshare')
-
           setIsScreenSharing(false)
           contextSocket?.emit('screen-share-toggled', { userId, hasScreenshare: false })
           setUsers((users) => ({
@@ -1072,7 +1051,6 @@ function SessionPage() {
   useEffect(() => {
     async function startPublisher() {
       try {
-        //console.log('Starting publisher for user:', userId);
         if (!userId) {
           console.error('User ID is not defined')
           return
@@ -1091,14 +1069,11 @@ function SessionPage() {
           console.warn('No audio tracks available; running without microphone')
         }
         setHasLocalAudio(audioTracks.length > 0)
-
-        //console.log('Got user media:', selfMediaStream.current);
         setMediaReady(true)
 
         if (selfVideoRef.current) {
           selfVideoRef.current.srcObject = selfMediaStream.current
           selfVideoRef.current.muted = true // Ensure muted
-          //console.log('Set video srcObject');
         } else {
           console.error('selfVideoRef.current is null')
           return
@@ -1120,7 +1095,6 @@ function SessionPage() {
           console.error('Self user not found in room state: %s', userId)
           return
         }
-        //console.log('Self user found:', selfUser);
         const videoTrack = selfUser?.publishedTracks['video']
         const videoTrackAlias = videoTrack?.alias
 
@@ -1248,13 +1222,11 @@ function SessionPage() {
         console.error('Error in publisher setup:', err)
       }
     }
-    //console.log('before startPublisher', moqClient, userId, selfVideoRef.current, publisherInitialized)
     if (moqClient && userId && selfVideoRef.current && !publisherInitialized.current) {
       publisherInitialized.current = true
       setTimeout(async () => {
         try {
           await startPublisher()
-          //console.log('startPublisher done')
         } catch (err) {
           console.error('error in startPublishing', err)
         }
@@ -1278,12 +1250,24 @@ function SessionPage() {
         client.onDataReceived = (_data) => {
           // console.warn('Data received:', data)
         }
-        //console.log('initClient', client)
         if (roomState && Object.values(users).length === 0) {
           const otherUsers = Object.keys(roomState.users).filter((uId) => uId != userId)
           setUsers(roomState.users)
 
           Object.keys(roomState.users).forEach((uId) => initializeTelemetryForUser(uId))
+
+          const anyUserHasMedia = otherUsers.some((uId) => {
+            const user = roomState.users[uId]
+            return user.hasVideo || user.hasAudio
+          })
+
+          if (anyUserHasMedia) {
+            testMetricsManagerRef.current.trackStartupJoinButtonClick('global')
+          } else {
+            console.log('Startup Latency: N/A')
+            startupLatencyTracked.current = true
+          }
+
           const canvasRefs = Object.fromEntries(otherUsers.map((uId) => [uId, React.createRef<HTMLCanvasElement>()]))
           const screenshareCanvasRefs = Object.fromEntries(
             otherUsers.map((uId) => [uId, React.createRef<HTMLCanvasElement>()]),
@@ -1302,6 +1286,7 @@ function SessionPage() {
       console.info(`User joined: ${user.name} (${user.id})`)
       addUser(user)
       initializeTelemetryForUser(user.id)
+
       setRemoteCanvasRefs((prev) => ({
         ...prev,
         [user.id]: React.createRef<HTMLCanvasElement>(),
@@ -1324,7 +1309,6 @@ function SessionPage() {
 
     socket.on('track-updated', (response: TrackUpdateResponse) => {
       setUsers((prevUsers) => {
-        //console.log('track-updated', prevUsers, response)
         const updatedUser = prevUsers[response.userId]
         if (updatedUser) {
           const track = response.track
@@ -1336,9 +1320,6 @@ function SessionPage() {
             track.kind === 'video-hd'
           ) {
             updatedUser.publishedTracks[track.kind] = track
-            console.log(
-              `Track updated for ${response.userId}: ${track.kind} - alias: ${track.alias}, announced: ${track.announced}`,
-            )
           }
         }
         return { ...prevUsers }
@@ -1346,10 +1327,7 @@ function SessionPage() {
 
       // Handle HD video subscription outside of setState
       if (response.track.kind === 'video-hd' && response.track.announced > 0) {
-        console.log('HD track announced, checking if we should subscribe...')
-
         const currentQuality = userVideoQualitiesRef.current[response.userId]
-        console.log(`HD track announced by ${response.userId}, current requested quality: ${currentQuality}`)
 
         if (currentQuality === 'HD') {
           if (hdSubscriptionAttemptsRef.current.has(response.userId)) {
@@ -1357,7 +1335,6 @@ function SessionPage() {
             return
           }
 
-          console.log(`Auto-subscribing to HD video from ${response.userId}`)
           hdSubscriptionAttemptsRef.current.add(response.userId)
 
           setTimeout(() => {
@@ -1366,10 +1343,8 @@ function SessionPage() {
 
             subscribeToHDVideoWithState(response.userId, currentUsers, currentCanvasRefs)
               .then((success) => {
-                if (success) {
-                  console.log(`HD subscription successful for ${response.userId}`)
-                } else {
-                  console.log(`HD subscription failed for ${response.userId}`)
+                if (!success) {
+                  console.error(`HD subscription failed for ${response.userId}`)
                 }
               })
               .catch((error) => {
@@ -1380,8 +1355,6 @@ function SessionPage() {
                 hdSubscriptionAttemptsRef.current.delete(response.userId)
               })
           }, 1000) // Increased delay to 1 second
-        } else {
-          console.log(`Not subscribing - current quality is ${currentQuality}, not HD`)
         }
       }
     })
@@ -1402,18 +1375,14 @@ function SessionPage() {
       })
     })
     socket.on('screen-share-toggled', ({ userId: toggledUserId, hasScreenshare }) => {
-      console.log(`Screen share toggled for ${toggledUserId}: ${hasScreenshare}`)
-
       setUsers((prevUsers) => {
         if (!prevUsers[toggledUserId]) return prevUsers
 
         if (!hasScreenshare && prevUsers[toggledUserId].hasScreenshare) {
-          console.log(`User ${toggledUserId} stopped screensharing, triggering unsubscription`)
           unsubscribeFromScreenshare(toggledUserId, false)
 
           const screenshareVirtualId = `${toggledUserId}-screenshare`
           if (maximizedUserId === screenshareVirtualId) {
-            console.log(`Clearing maximized screenshare user ${screenshareVirtualId}`)
             setMaximizedUserId(null)
           }
 
@@ -1436,7 +1405,6 @@ function SessionPage() {
 
     // Handle HD permission request from another user
     socket.on('hd-permission-request', ({ requesterId }) => {
-      console.log(`User ${requesterId} is requesting HD video permission from me`)
       const requester = usersRef.current[requesterId]
       const requesterName = requester ? requester.name : 'Unknown User'
       setHdPermissionRequest({ requesterId, requesterName })
@@ -1444,7 +1412,6 @@ function SessionPage() {
 
     // Handle permission denied response
     socket.on('hd-permission-denied', ({ targetUserId }) => {
-      console.log(`HD permission denied by ${targetUserId}`)
       // User stays in SD mode - no action needed since we didn't change quality yet
 
       // Remove from pending requests
@@ -1457,14 +1424,14 @@ function SessionPage() {
 
     // Handle permission granted response
     socket.on('hd-permission-granted', ({ targetUserId }) => {
-      console.log(`HD permission granted by ${targetUserId}`)
-
       // Remove from pending requests
       setPendingHDRequests((prev) => {
         const newSet = new Set(prev)
         newSet.delete(targetUserId)
         return newSet
       })
+
+      testMetricsManagerRef.current.trackQualityToggleStart(targetUserId, 'SD->HD')
 
       // First, set the quality to HD so the track-updated handler will auto-subscribe
       setUserVideoQualities((prev) => {
@@ -1473,14 +1440,12 @@ function SessionPage() {
           [targetUserId]: 'HD' as VideoQuality,
         }
         userVideoQualitiesRef.current = newQualities
-        console.log(`Set quality to HD for ${targetUserId} - track-updated will handle the rest`)
         return newQualities
       })
 
       // Unsubscribe from SD video after a short delay to ensure HD subscription starts
       setTimeout(async () => {
         try {
-          console.log(`Unsubscribing from SD video for ${targetUserId}`)
           await unsubscribeFromUser(targetUserId, 'video')
         } catch (error) {
           console.error(`Error unsubscribing from SD for ${targetUserId}:`, error)
@@ -1490,17 +1455,17 @@ function SessionPage() {
 
     // Handle direct HD video request (when permission is granted)
     socket.on('request-hd-video', ({ requesterId }) => {
-      console.log(`Starting HD encoding - permission was granted for ${requesterId}`)
+      console.debug(`Starting HD encoding - permission was granted for ${requesterId}`)
       handleStartHDEncoding()
     })
 
     socket.on('request-sd-video', ({ requesterId }) => {
-      console.log(`User ${requesterId} requested SD video from me`)
+      console.debug(`User ${requesterId} requested SD video from me`)
       handleStopHDEncoding()
     })
 
     socket.on('hd-already-active', ({ targetUserId }) => {
-      console.log(`HD encoding already active for ${targetUserId} - subscribing to existing HD stream`)
+      console.warn(`HD encoding already active for ${targetUserId} - subscribing to existing HD stream`)
 
       // Remove from pending requests since we're getting direct access to HD
       setPendingHDRequests((prev) => {
@@ -1508,6 +1473,8 @@ function SessionPage() {
         newSet.delete(targetUserId)
         return newSet
       })
+
+      testMetricsManagerRef.current.trackQualityToggleStart(targetUserId, 'SD->HD')
 
       manualQualityTransitionsRef.current.add(targetUserId)
 
@@ -1517,13 +1484,11 @@ function SessionPage() {
           [targetUserId]: 'HD' as VideoQuality,
         }
         userVideoQualitiesRef.current = newQualities
-        console.log(`Updated quality state to HD for ${targetUserId}:`, newQualities)
         return newQualities
       })
 
       setTimeout(async () => {
         try {
-          console.log(`Unsubscribing from SD video for ${targetUserId} before subscribing to existing HD`)
           await unsubscribeFromUser(targetUserId, 'video')
 
           await new Promise((resolve) => setTimeout(resolve, 500))
@@ -1531,12 +1496,9 @@ function SessionPage() {
           const currentUsers = usersRef.current
           const currentCanvasRefs = remoteCanvasRefsRef.current
 
-          console.log(`Subscribing to existing HD video for ${targetUserId}`)
           const success = await subscribeToHDVideoWithState(targetUserId, currentUsers, currentCanvasRefs)
 
-          if (success) {
-            console.log(`Successfully subscribed to existing HD video for ${targetUserId}`)
-          } else {
+          if (!success) {
             console.error(`Failed to subscribe to existing HD video for ${targetUserId}`)
           }
         } catch (error) {
@@ -1586,7 +1548,17 @@ function SessionPage() {
         return updated
       })
 
-      setLatencyHistory((prev) => {
+      setVideoLatencyHistory((prev) => {
+        const newHistory = { ...prev }
+        delete newHistory[msg.userId]
+        return newHistory
+      })
+      setAudioLatencyHistory((prev) => {
+        const newHistory = { ...prev }
+        delete newHistory[msg.userId]
+        return newHistory
+      })
+      setScreenshareLatencyHistory((prev) => {
         const newHistory = { ...prev }
         delete newHistory[msg.userId]
         return newHistory
@@ -1610,7 +1582,6 @@ function SessionPage() {
 
         return newColors
       })
-      // TODO: unsubscribe
     })
 
     socket.on('room-closed', (msg: RoomTimeoutMessage) => {
@@ -1673,6 +1644,7 @@ function SessionPage() {
       telemetryInstances.current[userId] = {
         video: new NetworkTelemetry(1000), // 1 second window
         audio: new NetworkTelemetry(1000), // 1 second window
+        screenshare: new NetworkTelemetry(1000), // 1 second window
       }
 
       setCodecData((prev) => ({
@@ -1735,39 +1707,71 @@ function SessionPage() {
     }
   }
 
-  const previousValues = useRef<{ [userId: string]: { latency: number; videoBitrate: number; audioBitrate: number } }>(
-    {},
-  )
+  const previousValues = useRef<{
+    [userId: string]: {
+      videoLatency: number
+      audioLatency: number
+      screenshareLatency: number
+      videoBitrate: number
+      audioBitrate: number
+    }
+  }>({})
 
   // Update every 100ms
   useEffect(() => {
     const interval = setInterval(() => {
-      const newTelemetryData: { [userId: string]: { latency: number; videoBitrate: number; audioBitrate: number } } = {}
+      const newTelemetryData: {
+        [userId: string]: {
+          videoLatency: number
+          audioLatency: number
+          screenshareLatency: number
+          videoBitrate: number
+          audioBitrate: number
+        }
+      } = {}
 
       Object.keys(telemetryInstances.current).forEach((userId) => {
         const telemetry = telemetryInstances.current[userId]
         if (telemetry) {
           const videoLatency = isSelf(userId) ? 0 : Math.round(telemetry.video.latency)
           const audioLatency = isSelf(userId) ? 0 : Math.round(telemetry.audio.latency)
+          const screenshareLatency = isSelf(userId) ? 0 : Math.round(telemetry.screenshare.latency)
           const videoBitrate = (telemetry.video.throughput * 8) / 1000 // bytes/s to Kbps
           const audioBitrate = (telemetry.audio.throughput * 8) / 1000 // bytes/s to Kbps
 
-          const user = users[userId]
-          const shouldUseAudioLatency = user?.hasAudio && (!user?.hasVideo || audioLatency > 0)
-          const displayLatency = shouldUseAudioLatency ? audioLatency : videoLatency
-          //console.log(`Telemetry for user ${userId}: videoLatency=${videoLatency}, audioLatency=${audioLatency}, displayLatency=${displayLatency}, hasVideo=${user?.hasVideo}, hasAudio=${user?.hasAudio}, shouldUseAudioLatency=${shouldUseAudioLatency}`)
-
           newTelemetryData[userId] = {
-            latency: displayLatency,
+            videoLatency,
+            audioLatency,
+            screenshareLatency,
             videoBitrate: Math.max(0, videoBitrate),
             audioBitrate: Math.max(0, audioBitrate),
           }
 
-          // Latency history (last 30 points)
+          // Video Latency history (last 30 points)
           if (!isSelf(userId)) {
-            setLatencyHistory((prevLatency) => {
+            setVideoLatencyHistory((prevLatency) => {
               const userHistory = prevLatency[userId] || []
-              const newHistory = [...userHistory, displayLatency].slice(-30)
+              const newHistory = [...userHistory, videoLatency].slice(-30)
+              return {
+                ...prevLatency,
+                [userId]: newHistory,
+              }
+            })
+
+            // Audio Latency history (last 30 points)
+            setAudioLatencyHistory((prevLatency) => {
+              const userHistory = prevLatency[userId] || []
+              const newHistory = [...userHistory, audioLatency].slice(-30)
+              return {
+                ...prevLatency,
+                [userId]: newHistory,
+              }
+            })
+
+            // Screenshare Latency history (last 30 points)
+            setScreenshareLatencyHistory((prevLatency) => {
+              const userHistory = prevLatency[userId] || []
+              const newHistory = [...userHistory, screenshareLatency].slice(-30)
               return {
                 ...prevLatency,
                 [userId]: newHistory,
@@ -1924,18 +1928,9 @@ function SessionPage() {
   }, [roomState?.created, sessionDurationMinutes])
 
   useEffect(() => {
-    console.log('Screenshare useEffect triggered:', {
-      hasStream: !!selfScreenshareStream.current,
-      hasRef: !!selfScreenshareRef.current,
-      isScreenSharing,
-      streamTracks: selfScreenshareStream.current?.getTracks()?.length || 0,
-    })
-
     if (selfScreenshareStream.current && selfScreenshareRef.current && isScreenSharing) {
-      console.log('Assigning screenshare stream to ref in useEffect')
       selfScreenshareRef.current.srcObject = selfScreenshareStream.current
       selfScreenshareRef.current.muted = true
-      console.log('Screenshare video element configured successfully:', selfScreenshareRef.current)
     }
   }, [isScreenSharing, selfScreenshareStream.current])
 
@@ -1953,7 +1948,6 @@ function SessionPage() {
   }
 
   function handleRemoteVideo(canvasRef: React.RefObject<HTMLCanvasElement>) {
-    //console.log('handleRemoteVideo init', canvasRef)
     if (!canvasRef?.current) return
     if (!moqClient) return
     if (canvasRef.current.dataset.status) return
@@ -1977,23 +1971,14 @@ function SessionPage() {
       tracksReady && isCompletelyUnsubscribed && !wasIntentionallyUnsubscribed && !isInManualTransition
 
     if (shouldSubscribe) {
-      console.log(`Starting subscription to ${userId} - video: ${videoTrackAlias}, audio: ${audioTrackAlias}`)
       setTimeout(async () => {
         await subscribeToTrack(roomName, userId, videoTrackAlias, audioTrackAlias, chatTrackAlias, canvasRef)
       }, 500)
     } else {
       if (tracksReady && isInManualTransition) {
-        console.log(`Skipping auto-subscription to ${userId} - user is undergoing manual quality transition`)
       } else if (tracksReady && wasIntentionallyUnsubscribed) {
-        console.log(`Skipping auto-subscription to ${userId} - user was intentionally unsubscribed from both tracks`)
       } else if (tracksReady && !isCompletelyUnsubscribed) {
-        console.log(
-          `Skipping subscription to ${userId} - already subscribed (video: ${isVideoSubscribed}, videoHD: ${isVideoHDSubscribed}, audio: ${isAudioSubscribed})`,
-        )
       } else if (!tracksReady) {
-        console.log(
-          `Not ready to subscribe to ${userId} yet - announced: ${announced}, video: ${videoTrackAlias}, audio: ${audioTrackAlias}`,
-        )
       }
     }
   }
@@ -2018,16 +2003,14 @@ function SessionPage() {
       tracksReady && userHasScreenshare && !isScreenshareSubscribed && !wasScreenshareIntentionallyUnsubscribed
 
     if (shouldSubscribe) {
-      console.log(`Starting screenshare subscription to ${userId} - screenshare: ${screenshareTrackAlias}`)
       setTimeout(async () => {
         await subscribeToScreenshareTrack(roomName, userId, screenshareTrackAlias, canvasRef)
       }, 500)
     } else {
       if (!userHasScreenshare && isScreenshareSubscribed) {
-        console.log(`User ${userId} stopped screensharing, cleaning up subscription`)
         unsubscribeFromScreenshare(userId, false)
       } else if (!tracksReady) {
-        console.log(
+        console.warn(
           `Not ready to subscribe to screenshare for ${userId} yet - screenshareTrackAlias: ${screenshareTrackAlias}`,
         )
       }
@@ -2045,11 +2028,9 @@ function SessionPage() {
   ) {
     try {
       const the_client = client ? client : moqClient!
-      //console.log('subscribeToTrack', roomName, userId, videoTrackAlias, audioTrackAlias, canvasRef)
       // TODO: sub to audio and video separately
       // for now, we just check the video announced date
       if (canvasRef.current && !canvasRef.current.dataset.status) {
-        //console.log("subscribeToTrack - Now will try to subscribe")
         const videoFullTrackName = getTrackname(roomName, userId, 'video')
         const audioFullTrackName = getTrackname(roomName, userId, 'audio')
         const chatFullTrackName = getTrackname(roomName, userId, 'chat')
@@ -2058,7 +2039,17 @@ function SessionPage() {
         initializeTelemetryForUser(userId)
         const userTelemetry = telemetryInstances.current[userId]
 
-        //console.log("subscribeToTrack - Use video subscriber called", videoTrackAlias, audioTrackAlias, videoFullTrackName, audioFullTrackName)
+        const user = usersRef.current[userId]
+        const hasVideoAtSubscription = user?.hasVideo || false
+        const hasAudioAtSubscription = user?.hasAudio || false
+
+        const onFirstFrameCallback = () => {
+          if (!startupLatencyTracked.current) {
+            startupLatencyTracked.current = true
+            testMetricsManagerRef.current.trackStartupFirstFrame('global', 'First user', true)
+          }
+        }
+
         // Subscribe to video and audio separately for independent control
         const videoResult = await onlyUseVideoSubscriber(
           the_client,
@@ -2066,6 +2057,7 @@ function SessionPage() {
           videoTrackAlias,
           videoFullTrackName,
           userTelemetry.video,
+          hasVideoAtSubscription ? onFirstFrameCallback : undefined,
         )()
 
         const audioResult = await onlyUseAudioSubscriber(
@@ -2073,6 +2065,7 @@ function SessionPage() {
           audioTrackAlias,
           audioFullTrackName,
           userTelemetry.audio,
+          hasAudioAtSubscription ? onFirstFrameCallback : undefined,
         )()
 
         const subscriptionResult = {
@@ -2095,7 +2088,6 @@ function SessionPage() {
 
         // Subscribe to chat if we have a valid chat track alias
         if (chatTrackAlias > 0) {
-          console.log('Subscribing to chat track with alias:', chatTrackAlias)
           try {
             await subscribeToChatTrack({
               moqClient: the_client,
@@ -2113,7 +2105,6 @@ function SessionPage() {
                 ])
               },
             })
-            console.log('Successfully subscribed to chat for user:', userId)
           } catch (error) {
             console.error('Failed to subscribe to chat for user:', userId, error)
           }
@@ -2121,7 +2112,6 @@ function SessionPage() {
           console.warn('Chat track alias is invalid or not set:', chatTrackAlias, 'for user:', userId)
           // Try to subscribe to chat later with a retry mechanism
           setTimeout(async () => {
-            console.log('Retrying chat subscription for user:', userId)
             const retrychatTrackAlias = parseInt(canvasRef.current?.dataset.chattrackalias || '-1')
             if (retrychatTrackAlias > 0) {
               try {
@@ -2141,7 +2131,6 @@ function SessionPage() {
                     ])
                   },
                 })
-                console.log('Successfully subscribed to chat on retry for user:', userId)
               } catch (error) {
                 console.error('Failed to subscribe to chat on retry for user:', userId, error)
               }
@@ -2150,7 +2139,6 @@ function SessionPage() {
             }
           }, 2000) // Wait 2 seconds before retrying chat subscription
         }
-        //console.log('subscribeToTrack result', result)
         // TODO: result comes true all the time, refactor...
         canvasRef.current!.dataset.status = subscriptionResult ? 'playing' : ''
       }
@@ -2166,8 +2154,6 @@ function SessionPage() {
     currentUsers: { [K: string]: RoomUser },
     currentCanvasRefs: { [id: string]: React.RefObject<HTMLCanvasElement> },
   ): Promise<boolean> {
-    console.log(`🔍 subscribeToHDVideoWithState called for ${targetUserId}`)
-
     if (!roomState || !moqClientRef.current) {
       console.error('Room state or moqClient not available')
       return false
@@ -2216,7 +2202,14 @@ function SessionPage() {
             videoHDRequestId: hdResult.videoRequestId,
           },
         }))
-        console.log(`Successfully subscribed to HD video for user ${targetUserId}`)
+
+        // Track quality toggle completion
+
+        const user = currentUsers[targetUserId]
+        if (user) {
+          testMetricsManagerRef.current.trackQualityToggleComplete(targetUserId, user.name)
+        }
+
         return true
       }
     } catch (error) {
@@ -2226,8 +2219,6 @@ function SessionPage() {
   }
 
   async function subscribeToSDVideo(targetUserId: string): Promise<boolean> {
-    console.log(`subscribeToSDVideo called for ${targetUserId}`)
-
     if (!roomState || !moqClientRef.current) {
       console.error('Room state or moqClient not available for SD subscription')
       return false
@@ -2252,12 +2243,6 @@ function SessionPage() {
       initializeTelemetryForUser(targetUserId)
       const userTelemetry = telemetryInstances.current[targetUserId]
 
-      console.log(`About to subscribe to SD video:`, {
-        targetUserId,
-        trackAlias: videoTrackAlias,
-        fullTrackName: videoFullTrackName.toString(),
-      })
-
       // Reset canvas status to allow subscription
       canvasRef.current.dataset.status = ''
 
@@ -2278,7 +2263,14 @@ function SessionPage() {
             videoRequestId: sdResult.videoRequestId,
           },
         }))
-        console.log(`Successfully subscribed to SD video for user ${targetUserId}`)
+
+        // Track quality toggle completion
+
+        const user = usersRef.current[targetUserId]
+        if (user) {
+          testMetricsManagerRef.current.trackQualityToggleComplete(targetUserId, user.name)
+        }
+
         return true
       }
     } catch (error) {
@@ -2301,11 +2293,6 @@ function SessionPage() {
         const screenshareFullTrackName = getTrackname(roomName, userId, 'screenshare')
         screenshareCanvasRef.current!.dataset.status = 'pending'
 
-        console.log(`Starting screenshare subscription for ${userId}`, {
-          trackName: screenshareFullTrackName,
-          trackAlias: screenshareTrackAlias,
-        })
-
         initializeTelemetryForUser(userId)
         const userTelemetry = telemetryInstances.current[userId]
 
@@ -2314,7 +2301,7 @@ function SessionPage() {
           screenshareCanvasRef,
           screenshareTrackAlias,
           screenshareFullTrackName,
-          userTelemetry.video,
+          userTelemetry.screenshare,
         )()
 
         if (screenshareResult && screenshareResult.videoRequestId) {
@@ -2336,7 +2323,7 @@ function SessionPage() {
 
         screenshareCanvasRef.current!.dataset.status = screenshareResult ? 'playing' : ''
       } else {
-        console.log(`Cannot subscribe to screenshare for ${userId}:`, {
+        console.warn(`Cannot subscribe to screenshare for ${userId}:`, {
           hasCanvasRef: !!screenshareCanvasRef.current,
           currentStatus: screenshareCanvasRef.current?.dataset.status,
         })
@@ -2385,7 +2372,6 @@ function SessionPage() {
       const screenshareCanvasRef = remoteScreenshareCanvasRefs[targetUserId]
       if (screenshareCanvasRef?.current) {
         screenshareCanvasRef.current.dataset.status = ''
-        console.log(`Reset canvas status for ${targetUserId} screenshare (no subscription case)`)
       }
 
       return
@@ -2394,9 +2380,7 @@ function SessionPage() {
     let unsubscriptionSuccess = false
 
     try {
-      console.log(`Attempting to unsubscribe from ${targetUserId} screenshare with requestId:`, requestId)
       await client.unsubscribe(requestId)
-      console.log(`Successfully unsubscribed from ${targetUserId} screenshare`)
       unsubscriptionSuccess = true
     } catch (error) {
       console.error(`Failed to unsubscribe from ${targetUserId} screenshare:`, error)
@@ -2419,19 +2403,9 @@ function SessionPage() {
       const canvas = screenshareCanvasRef.current
       clearScreenshareCanvas(canvas)
     }
-
-    console.log(
-      `Screenshare cleanup completed for ${targetUserId} (unsubscription: ${unsubscriptionSuccess ? 'success' : 'failed'})`,
-      {
-        refCleared: !screenshareSubscriptionsRef.current[targetUserId],
-        stateUpdate: 'pending...',
-      },
-    )
   }
 
   function leaveRoom() {
-    //console.log('Leaving room...');
-
     // Clean up any pending room closed messages and restore title
     setPendingRoomClosedMessage(null)
     document.title = originalTitle.current
@@ -2447,7 +2421,6 @@ function SessionPage() {
     }
 
     if (videoEncoderObjRef.current && videoEncoderObjRef.current.stop) {
-      //console.log('Stopping video encoder...');
       videoEncoderObjRef.current.stop()
       videoEncoderObjRef.current = null
     }
@@ -2471,8 +2444,6 @@ function SessionPage() {
   }
 
   const unsubscribeFromHDVideo = async (targetUserId: string): Promise<boolean> => {
-    console.log(`🔍 unsubscribeFromHDVideo called for ${targetUserId}`)
-
     if (!moqClient || targetUserId === userId) {
       console.warn(
         `Cannot unsubscribe from HD: moqClient=${!!moqClient}, targetUserId=${targetUserId}, userId=${userId}`,
@@ -2487,12 +2458,7 @@ function SessionPage() {
     }
 
     try {
-      console.log(
-        `Attempting to unsubscribe from ${targetUserId} HD video with requestId:`,
-        subscription.videoHDRequestId,
-      )
       await moqClient.unsubscribe(subscription.videoHDRequestId)
-      console.log(`Successfully unsubscribed from ${targetUserId} HD video`)
 
       setUserSubscriptions((prev) => ({
         ...prev,
@@ -2533,15 +2499,13 @@ function SessionPage() {
       subscription.videoRequestId !== undefined
     ) {
       try {
-        console.log(`Attempting to unsubscribe from ${targetUserId} video with requestId:`, subscription.videoRequestId)
         await _client.unsubscribe(subscription.videoRequestId)
-        console.log(`Successfully unsubscribed from ${targetUserId} video`)
         videoUnsubscribed = true
       } catch (error) {
         console.error(`Failed to unsubscribe from ${targetUserId} video:`, error)
       }
     } else if (type === 'video' || type === 'both') {
-      console.log(`Skipping video unsubscribe for ${targetUserId} - not subscribed or missing requestId`)
+      console.warn(`Skipping video unsubscribe for ${targetUserId} - not subscribed or missing requestId`)
     }
 
     const audioTypeCheck = type === 'audio' || type === 'both'
@@ -2550,18 +2514,13 @@ function SessionPage() {
 
     if (audioTypeCheck && audioSubscribedCheck && audioRequestIdCheck) {
       try {
-        console.log(
-          `Attempting to unsubscribe from ${targetUserId} audio with requestId:`,
-          subscription.audioRequestId!,
-        )
         await _client.unsubscribe(subscription.audioRequestId!)
-        console.log(`Successfully unsubscribed from ${targetUserId} audio`)
         audioUnsubscribed = true
       } catch (error) {
         console.error(`Failed to unsubscribe from ${targetUserId} audio:`, error)
       }
     } else if (type === 'audio' || type === 'both') {
-      console.log(`Skipping audio unsubscribe for ${targetUserId} - condition failed`)
+      console.warn(`Skipping audio unsubscribe for ${targetUserId} - condition failed`)
     }
 
     setUserSubscriptions((prev) => {
@@ -2588,7 +2547,6 @@ function SessionPage() {
         intentionallyUnsubscribed: willBeCompletelyUnsubscribed,
       }
 
-      console.log(`Updated subscription state for ${targetUserId}:`, newSubscription)
       return {
         ...prev,
         [targetUserId]: newSubscription,
@@ -2601,7 +2559,7 @@ function SessionPage() {
         canvasRef.current.dataset.status = ''
         // Don't cleanup the canvas worker, just reset status
         // The worker will be reused and reconfigured for HD if needed
-        console.log(`Reset canvas status for ${targetUserId}`)
+        console.warn(`Reset canvas status for ${targetUserId}`)
       }
     }
   }
@@ -2633,17 +2591,15 @@ function SessionPage() {
       const needsAudioSub = (type === 'audio' || type === 'both') && !hasAudioSub
 
       if (!needsVideoSub && !needsAudioSub) {
-        console.log(`Already subscribed to ${targetUserId} ${type}`)
+        console.warn(`Already subscribed to ${targetUserId} ${type}`)
         return
       }
 
       if (canvasRef.current.dataset.status) {
-        console.log(`Resetting canvas status for ${targetUserId} to allow resubscription`)
         canvasRef.current.dataset.status = ''
       }
 
       if (needsVideoSub && needsAudioSub) {
-        console.log(`Subscribing to both video and audio for ${targetUserId}`)
         await subscribeToTrack(
           roomName,
           targetUserId,
@@ -2653,7 +2609,9 @@ function SessionPage() {
           canvasRef,
         )
       } else if (needsVideoSub) {
-        console.log(`Adding video subscription for ${targetUserId}`)
+        // Track video resub start (when user clicks to resub)
+        testMetricsManagerRef.current.trackVideoResubStart(targetUserId)
+
         const videoFullTrackName = getTrackname(roomName, targetUserId, 'video')
         initializeTelemetryForUser(targetUserId)
         const userTelemetry = telemetryInstances.current[targetUserId]
@@ -2679,7 +2637,12 @@ function SessionPage() {
             }))
 
             canvasRef.current.dataset.status = 'playing'
-            console.log(`Video subscription added for ${targetUserId}, requestId: ${videoResult.videoRequestId}`)
+
+            // Track video resub complete
+            const user = usersRef.current[targetUserId]
+            if (user) {
+              testMetricsManagerRef.current.trackVideoResubComplete(targetUserId, user.name)
+            }
           } else {
             console.error(`Video subscription failed for ${targetUserId}`)
           }
@@ -2687,7 +2650,8 @@ function SessionPage() {
           console.error(`Failed to add video subscription for ${targetUserId}:`, error)
         }
       } else if (needsAudioSub) {
-        console.log(`Adding audio subscription for ${targetUserId}`)
+        // Track audio resub start (when user clicks to resub)
+        testMetricsManagerRef.current.trackAudioResubStart(targetUserId)
 
         const audioFullTrackName = getTrackname(roomName, targetUserId, 'audio')
         initializeTelemetryForUser(targetUserId)
@@ -2712,7 +2676,11 @@ function SessionPage() {
               },
             }))
 
-            console.log(`Audio subscription added for ${targetUserId}, requestId: ${audioResult.audioRequestId}`)
+            // Track audio resub complete
+            const user = usersRef.current[targetUserId]
+            if (user) {
+              testMetricsManagerRef.current.trackAudioResubComplete(targetUserId, user.name)
+            }
           } else {
             console.error(`Audio subscription failed for ${targetUserId}`)
           }
@@ -2836,7 +2804,6 @@ function SessionPage() {
 
   useEffect(() => {
     if (maximizedUserId && !usersToRender.find((u) => u.id === maximizedUserId)) {
-      console.log(`Maximized user ${maximizedUserId} no longer exists, clearing maximized state`)
       setMaximizedUserId(null)
     }
   }, [maximizedUserId, usersToRender])
@@ -3040,8 +3007,8 @@ function SessionPage() {
                       {telemetryData[user.id] &&
                         !isSelf(user.id) && ( // TODO: Calculate throughputs for self user
                           <div className="hidden md:block text-xs text-gray-300 mt-1">
-                            {telemetryData[user.id].latency}ms | {telemetryData[user.id].videoBitrate.toFixed(0)}Kbit/s
-                            | {telemetryData[user.id].audioBitrate.toFixed(0)}Kbit/s
+                            {telemetryData[user.id].videoLatency}ms | {telemetryData[user.id].videoBitrate.toFixed(0)}
+                            Kbit/s | {telemetryData[user.id].audioBitrate.toFixed(0)}Kbit/s
                           </div>
                         )}
                     </div>
@@ -3223,39 +3190,88 @@ function SessionPage() {
                             <h3 className="text-lg font-bold text-black leading-tight">Network Stats</h3>
                           </div>
 
-                          {/* Legend */}
-                          <div className="grid grid-cols-3 gap-1 mb-2 flex-shrink-0">
-                            <div className="flex items-center space-x-1">
-                              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                              <span className="text-xs font-medium text-gray-700">VIDEO</span>
+                          {/* Metrics Grid */}
+                          <div className="grid grid-cols-2 gap-3 mb-3 flex-shrink-0">
+                            {/* Bitrate Section */}
+                            <div>
+                              <h4 className="text-xs font-semibold text-gray-600 mb-1.5">Bitrate</h4>
+                              <div className="space-y-1.5">
+                                {/* Video Bitrate */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                    <span className="text-xs font-medium text-gray-700">VIDEO</span>
+                                  </div>
+                                  <span className="text-xs font-bold text-black">
+                                    {telemetryData[user.id]
+                                      ? `${telemetryData[user.id].videoBitrate.toFixed(0)} Kbit/s`
+                                      : 'N/A'}
+                                  </span>
+                                </div>
+                                {/* Audio Bitrate */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
+                                    <span className="text-xs font-medium text-gray-700">AUDIO</span>
+                                  </div>
+                                  <span className="text-xs font-bold text-black">
+                                    {telemetryData[user.id]
+                                      ? `${telemetryData[user.id].audioBitrate.toFixed(0)} Kbit/s`
+                                      : 'N/A'}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
-                            <div className="flex items-center space-x-1">
-                              <div className="w-2 h-2 bg-gray-500 rounded-full"></div>
-                              <span className="text-xs font-medium text-gray-700">AUDIO</span>
-                            </div>
-                            <div className="flex items-center space-x-1">
-                              <div className="w-2 h-2 bg-red-500 rounded-full"></div>
-                              <span className="text-xs font-medium text-gray-700">LATENCY</span>
-                            </div>
-                          </div>
 
-                          {/* Values with smooth transitions */}
-                          <div className="grid grid-cols-3 gap-1 mb-3 flex-shrink-0">
-                            <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
-                              {telemetryData[user.id]
-                                ? `${telemetryData[user.id].videoBitrate.toFixed(0)} Kbit/s`
-                                : 'N/A'}
-                            </span>
-                            <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
-                              {telemetryData[user.id]
-                                ? `${telemetryData[user.id].audioBitrate.toFixed(0)} Kbit/s`
-                                : 'N/A'}
-                            </span>
-                            <span className="text-xs font-bold text-black transition-all duration-200 ease-in-out">
-                              {!isSelf(user.id) && telemetryData[user.id]
-                                ? `${telemetryData[user.id].latency}ms`
-                                : 'N/A'}
-                            </span>
+                            {/* Latency Section */}
+                            <div>
+                              <h4 className="text-xs font-semibold text-gray-600 mb-1.5">Latency</h4>
+                              <div className="space-y-1.5">
+                                {/* Video Latency */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                                    <span className="text-xs font-medium text-gray-700">VIDEO</span>
+                                  </div>
+                                  <span className="text-xs font-bold text-black">
+                                    {!isSelf(user.id) &&
+                                    telemetryData[user.id] &&
+                                    (userSubscriptions[user.id]?.videoSubscribed ||
+                                      userSubscriptions[user.id]?.videoHDSubscribed)
+                                      ? `${telemetryData[user.id].videoLatency}ms`
+                                      : 'N/A'}
+                                  </span>
+                                </div>
+                                {/* Audio Latency */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+                                    <span className="text-xs font-medium text-gray-700">AUDIO</span>
+                                  </div>
+                                  <span className="text-xs font-bold text-black">
+                                    {!isSelf(user.id) &&
+                                    telemetryData[user.id] &&
+                                    userSubscriptions[user.id]?.audioSubscribed
+                                      ? `${telemetryData[user.id].audioLatency}ms`
+                                      : 'N/A'}
+                                  </span>
+                                </div>
+                                {/* Screenshare Latency */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                                    <span className="text-xs font-medium text-gray-700">SCREEN</span>
+                                  </div>
+                                  <span className="text-xs font-bold text-black">
+                                    {!isSelf(user.id) &&
+                                    telemetryData[user.id] &&
+                                    userSubscriptions[user.id]?.screenshareSubscribed
+                                      ? `${telemetryData[user.id].screenshareLatency}ms`
+                                      : 'N/A'}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
                           </div>
 
                           {/* Network Stats Graph */}
@@ -3263,13 +3279,13 @@ function SessionPage() {
                             {/* Graph container */}
                             <div className="h-full bg-gray-50 rounded relative overflow-hidden border border-gray-200 min-h-16">
                               {/* Left Y-axis labels (Bitrate) */}
-                              <div className="absolute left-1 top-1 text-xs text-gray-500 leading-none">500K</div>
-                              <div className="absolute left-1 top-1/2 text-xs text-gray-500 leading-none">250K</div>
+                              <div className="absolute left-1 top-1 text-xs text-gray-500 leading-none">1500K</div>
+                              <div className="absolute left-1 top-1/2 text-xs text-gray-500 leading-none">750K</div>
                               <div className="absolute left-1 bottom-1 text-xs text-gray-500 leading-none">0</div>
 
                               {/* Right Y-axis labels (Latency) */}
-                              <div className="absolute right-1 top-1 text-xs text-red-500 leading-none">200ms</div>
-                              <div className="absolute right-1 top-1/2 text-xs text-red-500 leading-none">100ms</div>
+                              <div className="absolute right-1 top-1 text-xs text-red-500 leading-none">600ms</div>
+                              <div className="absolute right-1 top-1/2 text-xs text-red-500 leading-none">300ms</div>
                               <div className="absolute right-1 bottom-1 text-xs text-red-500 leading-none">0ms</div>
 
                               {/* Grid lines */}
@@ -3294,7 +3310,7 @@ function SessionPage() {
                                             .map((videoBitrate, index) => {
                                               const x =
                                                 (index / Math.max(videoBitrateHistory[user.id].length - 1, 1)) * 300
-                                              const y = 100 - Math.min((videoBitrate / 500) * 100, 100)
+                                              const y = 100 - Math.min((videoBitrate / 1500) * 100, 100)
                                               return `${x},${y}`
                                             })
                                             .join(' ')
@@ -3319,7 +3335,7 @@ function SessionPage() {
                                             .map((audioBitrate, index) => {
                                               const x =
                                                 (index / Math.max(audioBitrateHistory[user.id].length - 1, 1)) * 300
-                                              const y = 100 - Math.min((audioBitrate / 500) * 100, 100)
+                                              const y = 100 - Math.min((audioBitrate / 1500) * 100, 100)
                                               return `${x},${y}`
                                             })
                                             .join(' ')
@@ -3329,7 +3345,7 @@ function SessionPage() {
                                 </svg>
                               </div>
 
-                              {/* Latency line */}
+                              {/* Video Latency line */}
                               <div className="absolute inset-0 p-2">
                                 <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
                                   <polyline
@@ -3339,17 +3355,73 @@ function SessionPage() {
                                     strokeLinecap="round"
                                     strokeLinejoin="round"
                                     points={
-                                      !isSelf(user.id) && latencyHistory[user.id] && latencyHistory[user.id].length > 0
-                                        ? latencyHistory[user.id]
+                                      !isSelf(user.id) &&
+                                      videoLatencyHistory[user.id] &&
+                                      videoLatencyHistory[user.id].length > 0
+                                        ? videoLatencyHistory[user.id]
                                             .map((latency: number, index: number) => {
-                                              const x = (index / Math.max(latencyHistory[user.id].length - 1, 1)) * 300
-                                              const y = 100 - Math.min((latency / 200) * 100, 100)
+                                              const x =
+                                                (index / Math.max(videoLatencyHistory[user.id].length - 1, 1)) * 300
+                                              const y = 100 - Math.min((latency / 600) * 100, 100)
                                               return `${x},${y}`
                                             })
                                             .join(' ')
-                                        : isSelf(user.id)
-                                          ? '' // No line for self user
-                                          : ''
+                                        : ''
+                                    }
+                                  />
+                                </svg>
+                              </div>
+
+                              {/* Audio Latency line */}
+                              <div className="absolute inset-0 p-2">
+                                <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
+                                  <polyline
+                                    fill="none"
+                                    stroke="#f97316"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    points={
+                                      !isSelf(user.id) &&
+                                      audioLatencyHistory[user.id] &&
+                                      audioLatencyHistory[user.id].length > 0
+                                        ? audioLatencyHistory[user.id]
+                                            .map((latency: number, index: number) => {
+                                              const x =
+                                                (index / Math.max(audioLatencyHistory[user.id].length - 1, 1)) * 300
+                                              const y = 100 - Math.min((latency / 600) * 100, 100)
+                                              return `${x},${y}`
+                                            })
+                                            .join(' ')
+                                        : ''
+                                    }
+                                  />
+                                </svg>
+                              </div>
+
+                              {/* Screenshare Latency line */}
+                              <div className="absolute inset-0 p-2">
+                                <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
+                                  <polyline
+                                    fill="none"
+                                    stroke="#a855f7"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    points={
+                                      !isSelf(user.id) &&
+                                      screenshareLatencyHistory[user.id] &&
+                                      screenshareLatencyHistory[user.id].length > 0
+                                        ? screenshareLatencyHistory[user.id]
+                                            .map((latency: number, index: number) => {
+                                              const x =
+                                                (index / Math.max(screenshareLatencyHistory[user.id].length - 1, 1)) *
+                                                300
+                                              const y = 100 - Math.min((latency / 600) * 100, 100)
+                                              return `${x},${y}`
+                                            })
+                                            .join(' ')
+                                        : ''
                                     }
                                   />
                                 </svg>
@@ -3672,6 +3744,7 @@ function SessionPage() {
             </button>
           </>
         )}
+
         {/* End Call Button */}
         <button
           onClick={leaveRoom}
@@ -3699,6 +3772,12 @@ function SessionPage() {
           audioObjects={fetchedRewindData[selectedRewindUserId]?.audio || []}
           userName={users[selectedRewindUserId]?.name || 'Unknown User'}
           userColor={getUserColorHex(selectedRewindUserId)}
+          onPlaybackStarted={() => {
+            const user = users[selectedRewindUserId]
+            if (user) {
+              testMetricsManagerRef.current.trackRewindPlaybackStarted(selectedRewindUserId, user.name)
+            }
+          }}
         />
       )}
 
@@ -3717,7 +3796,7 @@ function SessionPage() {
             <div className="flex space-x-3">
               <button
                 onClick={handleHDPermissionAccept}
-                className="flex-1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+                className="flex-x1 bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-colors"
               >
                 Allow HD
               </button>
