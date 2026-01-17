@@ -45,6 +45,8 @@ const Telemetry: React.FC = () => {
   const loadSessions = async () => {
     try {
       const sessionList = await telemetryDB.getSessions()
+      // Sort sessions by most recent first
+      sessionList.sort((a, b) => (a < b ? 1 : -1))
       setSessions(sessionList)
     } catch (error) {
       console.error('Failed to load sessions:', error)
