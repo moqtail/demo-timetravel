@@ -74,8 +74,7 @@ import { MOQtailClient } from 'moqtail-ts/client'
 import { NetworkTelemetry, ClockNormalizer } from 'moqtail-ts/util'
 import { RewindPlayer } from './RewindPlayer'
 import { BufferedMoqtObject } from '@/composables/rewindBuffer'
-import { TestMetricsManager } from '@/util/testMetrics'
-import { telemetryDB, TelemetryStreamType } from '@/util/telemetryDB'
+import { TelemetryManager } from '@/util/telemetryManager'
 
 function SessionPage() {
   // initialize the MOQTail client
@@ -235,7 +234,7 @@ function SessionPage() {
   const [pendingHDRequests, setPendingHDRequests] = useState<Set<string>>(new Set())
 
   // Test Metrics Manager
-  const testMetricsManagerRef = useRef<TestMetricsManager>(new TestMetricsManager())
+  const telemetryManagerRef = useRef<TelemetryManager>(new TelemetryManager())
   const startupLatencyTracked = useRef<boolean>(false)
 
   useEffect(() => {
@@ -365,7 +364,7 @@ function SessionPage() {
     // Track rewind button pressed
     const user = users[userId]
     if (user) {
-      testMetricsManagerRef.current.trackRewindButtonPressed(sessionId.current, userId)
+      telemetryManagerRef.current.trackRewindButtonPressed(sessionId.current, userId)
     }
 
     setIsFetching(true)
@@ -757,7 +756,7 @@ function SessionPage() {
 
     // Track quality toggle start
     const direction = currentQuality === 'HD' && newQuality === 'SD' ? 'HD->SD' : 'SD->HD'
-    testMetricsManagerRef.current.trackQualityToggleStart(sessionId.current, targetUserId, direction)
+    telemetryManagerRef.current.trackQualityToggleStart(sessionId.current, targetUserId, direction)
 
     try {
       if (currentQuality === 'HD' && newQuality === 'SD') {
@@ -1267,7 +1266,7 @@ function SessionPage() {
           })
 
           if (anyUserHasMedia) {
-            testMetricsManagerRef.current.trackStartupJoinButtonClick('global')
+            telemetryManagerRef.current.trackStartupJoinButtonClick('global')
           } else {
             console.log('Startup Latency: N/A')
             startupLatencyTracked.current = true
@@ -1436,7 +1435,7 @@ function SessionPage() {
         return newSet
       })
 
-      testMetricsManagerRef.current.trackQualityToggleStart(sessionId.current, targetUserId, 'SD->HD')
+      telemetryManagerRef.current.trackQualityToggleStart(sessionId.current, targetUserId, 'SD->HD')
 
       // First, set the quality to HD so the track-updated handler will auto-subscribe
       setUserVideoQualities((prev) => {
@@ -1479,7 +1478,7 @@ function SessionPage() {
         return newSet
       })
 
-      testMetricsManagerRef.current.trackQualityToggleStart(sessionId.current, targetUserId, 'SD->HD')
+      telemetryManagerRef.current.trackQualityToggleStart(sessionId.current, targetUserId, 'SD->HD')
 
       manualQualityTransitionsRef.current.add(targetUserId)
 
@@ -1771,17 +1770,6 @@ function SessionPage() {
                 [userId]: newHistory,
               }
             })
-            // Store video latency to DB
-            telemetryDB
-              .addEntry({
-                sessionId: sessionId.current,
-                userId,
-                userName: users[userId]?.name || userId,
-                streamType: TelemetryStreamType.VideoLatency,
-                timestamp: Date.now(),
-                value: videoLatency,
-              })
-              .catch((err) => console.error('Failed to store video latency:', err))
 
             // Audio Latency history (last 30 points)
             setAudioLatencyHistory((prevLatency) => {
@@ -1792,18 +1780,6 @@ function SessionPage() {
                 [userId]: newHistory,
               }
             })
-
-            // Store audio latency to DB
-            telemetryDB
-              .addEntry({
-                sessionId: sessionId.current,
-                userId,
-                userName: users[userId]?.name || userId,
-                streamType: TelemetryStreamType.AudioLatency,
-                timestamp: Date.now(),
-                value: audioLatency,
-              })
-              .catch((err) => console.error('Failed to store audio latency:', err))
 
             // Screenshare Latency history (last 30 points)
             setScreenshareLatencyHistory((prevLatency) => {
@@ -1816,18 +1792,6 @@ function SessionPage() {
             })
           }
 
-          // Store screenshare latency to DB
-          telemetryDB
-            .addEntry({
-              sessionId: sessionId.current,
-              userId,
-              userName: users[userId]?.name || userId,
-              streamType: TelemetryStreamType.ScreenshareLatency,
-              timestamp: Date.now(),
-              value: screenshareLatency,
-            })
-            .catch((err) => console.error('Failed to store screenshare latency:', err))
-
           // Video bitrate history (last 30 points)
           setVideoBitrateHistory((prevVideoBitrate) => {
             const userHistory = prevVideoBitrate[userId] || []
@@ -1837,18 +1801,6 @@ function SessionPage() {
               [userId]: newHistory,
             }
           })
-
-          // Store video bitrate to DB
-          telemetryDB
-            .addEntry({
-              sessionId: sessionId.current,
-              userId,
-              userName: users[userId]?.name || userId,
-              streamType: TelemetryStreamType.VideoBitrate,
-              timestamp: Date.now(),
-              value: videoBitrate,
-            })
-            .catch((err) => console.error('Failed to store video bitrate:', err))
 
           // Audio bitrate history (last 30 points)
           setAudioBitrateHistory((prevAudioBitrate) => {
@@ -1860,18 +1812,6 @@ function SessionPage() {
             }
           })
 
-          // Store audio bitrate to DB
-          telemetryDB
-            .addEntry({
-              sessionId: sessionId.current,
-              userId,
-              userName: users[userId]?.name || userId,
-              streamType: TelemetryStreamType.AudioBitrate,
-              timestamp: Date.now(),
-              value: audioBitrate,
-            })
-            .catch((err) => console.error('Failed to store audio bitrate:', err))
-
           setScreenshareBitrateHistory((prevScreenshareBitrate) => {
             const userHistory = prevScreenshareBitrate[userId] || []
             const newHistory = [...userHistory, screenshareBitrate].slice(-30)
@@ -1881,17 +1821,19 @@ function SessionPage() {
             }
           })
 
-          // Store screenshare bitrate to DB
-          telemetryDB
-            .addEntry({
-              sessionId: sessionId.current,
-              userId,
-              userName: users[userId]?.name || userId,
-              streamType: TelemetryStreamType.ScreenshareBitrate,
-              timestamp: Date.now(),
-              value: screenshareBitrate,
-            })
-            .catch((err) => console.error('Failed to store screenshare bitrate:', err))
+          // Store all latency and bitrate telemetry to DB via TelemetryManager
+          telemetryManagerRef.current.trackLatencyAndBitrate(
+            sessionId.current,
+            userId,
+            users[userId]?.name || userId,
+            videoLatency,
+            audioLatency,
+            screenshareLatency,
+            videoBitrate,
+            audioBitrate,
+            screenshareBitrate,
+            isSelf(userId),
+          )
         }
       })
 
@@ -2140,7 +2082,7 @@ function SessionPage() {
         const onFirstFrameCallback = () => {
           if (!startupLatencyTracked.current) {
             startupLatencyTracked.current = true
-            testMetricsManagerRef.current.trackStartupFirstFrame(sessionId.current, 'global', 'First user', true)
+            telemetryManagerRef.current.trackStartupFirstFrame(sessionId.current, 'global', 'First user', true)
           }
         }
 
@@ -2301,7 +2243,7 @@ function SessionPage() {
 
         const user = currentUsers[targetUserId]
         if (user) {
-          testMetricsManagerRef.current.trackQualityToggleComplete(sessionId.current, targetUserId, user.name)
+          telemetryManagerRef.current.trackQualityToggleComplete(sessionId.current, targetUserId, user.name)
         }
 
         return true
@@ -2362,7 +2304,7 @@ function SessionPage() {
 
         const user = usersRef.current[targetUserId]
         if (user) {
-          testMetricsManagerRef.current.trackQualityToggleComplete(sessionId.current, targetUserId, user.name)
+          telemetryManagerRef.current.trackQualityToggleComplete(sessionId.current, targetUserId, user.name)
         }
 
         return true
@@ -2701,7 +2643,7 @@ function SessionPage() {
         )
       } else if (needsVideoSub) {
         // Track video resub start (when user clicks to resub)
-        testMetricsManagerRef.current.trackVideoResubStart(sessionId.current, targetUserId)
+        telemetryManagerRef.current.trackVideoResubStart(sessionId.current, targetUserId)
 
         const videoFullTrackName = getTrackname(roomName, targetUserId, 'video')
         initializeTelemetryForUser(targetUserId)
@@ -2732,7 +2674,7 @@ function SessionPage() {
             // Track video resub complete
             const user = usersRef.current[targetUserId]
             if (user) {
-              testMetricsManagerRef.current.trackVideoResubComplete(sessionId.current, targetUserId, user.name)
+              telemetryManagerRef.current.trackVideoResubComplete(sessionId.current, targetUserId, user.name)
             }
           } else {
             console.error(`Video subscription failed for ${targetUserId}`)
@@ -2742,7 +2684,7 @@ function SessionPage() {
         }
       } else if (needsAudioSub) {
         // Track audio resub start (when user clicks to resub)
-        testMetricsManagerRef.current.trackAudioResubStart(sessionId.current, targetUserId)
+        telemetryManagerRef.current.trackAudioResubStart(sessionId.current, targetUserId)
 
         const audioFullTrackName = getTrackname(roomName, targetUserId, 'audio')
         initializeTelemetryForUser(targetUserId)
@@ -2770,7 +2712,7 @@ function SessionPage() {
             // Track audio resub complete
             const user = usersRef.current[targetUserId]
             if (user) {
-              testMetricsManagerRef.current.trackAudioResubComplete(sessionId.current, targetUserId, user.name)
+              telemetryManagerRef.current.trackAudioResubComplete(sessionId.current, targetUserId, user.name)
             }
           } else {
             console.error(`Audio subscription failed for ${targetUserId}`)
@@ -3908,11 +3850,7 @@ function SessionPage() {
           onPlaybackStarted={() => {
             const user = users[selectedRewindUserId]
             if (user) {
-              testMetricsManagerRef.current.trackRewindPlaybackStarted(
-                sessionId.current,
-                selectedRewindUserId,
-                user.name,
-              )
+              telemetryManagerRef.current.trackRewindPlaybackStarted(sessionId.current, selectedRewindUserId, user.name)
             }
           }}
         />

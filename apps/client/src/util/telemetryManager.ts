@@ -16,70 +16,7 @@
 
 import { telemetryDB, TelemetryStreamType } from '@/util/telemetryDB'
 
-export interface StartupLatencyMetric {
-  type: 'startup-latency'
-  userId: string
-  userName: string
-  startTime: number
-  endTime: number
-  duration: number
-  timestamp: string
-  notes: string
-}
-
-export interface QualityToggleMetric {
-  type: 'quality-toggle'
-  userId: string
-  userName: string
-  direction: 'HD->SD' | 'SD->HD'
-  startTime: number
-  endTime: number
-  duration: number
-  timestamp: string
-}
-
-export interface PeriodicMonitoringMetric {
-  type: 'periodic-monitoring'
-  userId: string
-  userName: string
-  wallClock: number
-  latency: number
-  quality: 'SD' | 'HD'
-  videoBitrate: number
-  audioBitrate: number
-  timestamp: string
-}
-
-export interface RewindMetric {
-  type: 'rewind'
-  userId: string
-  userName: string
-  action: 'rewind-button-pressed' | 'rewind-playback-started' | 'rewind-closed' | 'first-frame-after-rewind'
-  time: number
-  timestamp: string
-  notes: string
-}
-
-export interface SubscriptionMetric {
-  type: 'subscription'
-  userId: string
-  userName: string
-  action: 'unsub-video' | 'resub-video' | 'unsub-audio' | 'resub-audio'
-  startTime: number
-  endTime?: number
-  duration?: number
-  timestamp: string
-}
-
-export type TestMetric =
-  | StartupLatencyMetric
-  | QualityToggleMetric
-  | PeriodicMonitoringMetric
-  | RewindMetric
-  | SubscriptionMetric
-
-export class TestMetricsManager {
-  private metrics: TestMetric[] = []
+export class TelemetryManager {
   private startupTrackingMap: Map<string, number> = new Map()
   private qualityToggleTrackingMap: Map<string, { startTime: number; direction: 'HD->SD' | 'SD->HD' }> = new Map()
   private rewindTrackingMap: Map<string, { rewindButtonPressed?: number; rewindPlaybackStarted?: number }> = new Map()
@@ -101,17 +38,6 @@ export class TestMetricsManager {
     const endTime = Date.now()
     const duration = endTime - startTime
 
-    const metric: StartupLatencyMetric = {
-      type: 'startup-latency',
-      userId,
-      userName,
-      startTime,
-      endTime,
-      duration,
-      timestamp: new Date().toISOString(),
-      notes: hasCam ? `First frame rendered` : 'N/A - Camera off',
-    }
-
     telemetryDB.addEntry({
       sessionId,
       userId,
@@ -121,7 +47,7 @@ export class TestMetricsManager {
       value: duration,
     })
 
-    console.log('StartupLatency: ', metric.duration, 'ms')
+    console.log('StartupLatency: ', duration, 'ms')
     this.startupTrackingMap.delete(userId)
   }
 
@@ -140,22 +66,11 @@ export class TestMetricsManager {
     const endTime = Date.now()
     const duration = endTime - tracking.startTime
 
-    const metric: QualityToggleMetric = {
-      type: 'quality-toggle',
-      userId,
-      userName,
-      direction: tracking.direction,
-      startTime: tracking.startTime,
-      endTime,
-      duration,
-      timestamp: new Date().toISOString(),
-    }
-
     if (tracking.direction === 'HD->SD') {
-      console.log('HD->SD Toggle: ', metric.duration, 'ms')
+      console.log('HD->SD Toggle: ', duration, 'ms')
     }
     if (tracking.direction === 'SD->HD') {
-      console.log('SD->HD Toggle: ', metric.duration, 'ms')
+      console.log('SD->HD Toggle: ', duration, 'ms')
     }
     this.qualityToggleTrackingMap.delete(userId)
 
@@ -172,8 +87,6 @@ export class TestMetricsManager {
     })
   }
 
-  // ===== Periodic Monitoring removed (not needed for the 3 requested metrics) =====
-
   // ===== Test 3: Rewind Timing =====
   trackRewindButtonPressed(_sessionId: string, userId: string) {
     const time = Date.now()
@@ -184,20 +97,8 @@ export class TestMetricsManager {
     const time = Date.now()
     const tracking = this.rewindTrackingMap.get(userId)
 
-    const metric: RewindMetric = {
-      type: 'rewind',
-      userId,
-      userName,
-      action: 'rewind-playback-started',
-      time,
-      timestamp: new Date().toISOString(),
-      notes: tracking?.rewindButtonPressed
-        ? `Duration from button press: ${time - tracking.rewindButtonPressed}ms`
-        : 'No button press tracked',
-    }
-
     // Log Rewind Latency
-    console.log('Rewind Latency: ', metric.time - tracking?.rewindButtonPressed!, 'ms')
+    console.log('Rewind Latency: ', time - tracking?.rewindButtonPressed!, 'ms')
 
     if (tracking) {
       this.rewindTrackingMap.set(userId, { ...tracking, rewindPlaybackStarted: time })
@@ -233,21 +134,10 @@ export class TestMetricsManager {
     const endTime = Date.now()
 
     if (startTime) {
-      const metric: SubscriptionMetric = {
-        type: 'subscription',
-        userId,
-        userName,
-        action: 'resub-video',
-        startTime,
-        endTime,
-        duration: endTime - startTime,
-        timestamp: new Date().toISOString(),
-      }
-
-      this.metrics.push(metric)
-
       const { videoResub, ...rest } = tracking
       this.subscriptionTrackingMap.set(userId, rest)
+
+      const duration = endTime - startTime
 
       // add to telemetryDB
       telemetryDB
@@ -257,7 +147,7 @@ export class TestMetricsManager {
           userName,
           streamType: TelemetryStreamType.VideoResubLatency,
           timestamp: Date.now(),
-          value: metric.duration!,
+          value: duration,
         })
         .then(() => {
           console.log('Video Resub Latency metric saved to telemetryDB')
@@ -266,7 +156,7 @@ export class TestMetricsManager {
           console.error('Error saving Video Resub Latency metric to telemetryDB:', error)
         })
 
-      console.log(`Video Resubcription Latency for ${userName}: ${metric.duration}ms`)
+      console.log(`Video Resubcription Latency for ${userName}: ${duration}ms`)
     }
   }
 
@@ -282,18 +172,7 @@ export class TestMetricsManager {
     const endTime = Date.now()
 
     if (startTime) {
-      const metric: SubscriptionMetric = {
-        type: 'subscription',
-        userId,
-        userName,
-        action: 'resub-audio',
-        startTime,
-        endTime,
-        duration: endTime - startTime,
-        timestamp: new Date().toISOString(),
-      }
-
-      this.metrics.push(metric)
+      const duration = endTime - startTime
 
       // Clear audio resub tracking
       const { audioResub, ...rest } = tracking
@@ -307,7 +186,7 @@ export class TestMetricsManager {
           userName,
           streamType: TelemetryStreamType.AudioResubLatency,
           timestamp: Date.now(),
-          value: metric.duration!,
+          value: duration!,
         })
         .then(() => {
           console.log('Audio Resub Latency metric saved to telemetryDB')
@@ -316,7 +195,96 @@ export class TestMetricsManager {
           console.error('Error saving Audio Resub Latency metric to telemetryDB:', error)
         })
 
-      console.log(`Audio Resubcription Latency for ${userName}: ${metric.duration}ms`)
+      console.log(`Audio Resubcription Latency for ${userName}: ${duration}ms`)
     }
+  }
+
+  // ===== Latency and Bitrate Telemetry =====
+  trackLatencyAndBitrate(
+    sessionId: string,
+    userId: string,
+    userName: string,
+    videoLatency: number,
+    audioLatency: number,
+    screenshareLatency: number,
+    videoBitrate: number,
+    audioBitrate: number,
+    screenshareBitrate: number,
+    isSelf: boolean,
+  ) {
+    // Only track latency for remote users (not self)
+    if (!isSelf) {
+      // Store video latency to DB
+      telemetryDB
+        .addEntry({
+          sessionId,
+          userId,
+          userName,
+          streamType: TelemetryStreamType.VideoLatency,
+          timestamp: Date.now(),
+          value: videoLatency,
+        })
+        .catch((err) => console.error('Failed to store video latency:', err))
+
+      // Store audio latency to DB
+      telemetryDB
+        .addEntry({
+          sessionId,
+          userId,
+          userName,
+          streamType: TelemetryStreamType.AudioLatency,
+          timestamp: Date.now(),
+          value: audioLatency,
+        })
+        .catch((err) => console.error('Failed to store audio latency:', err))
+    }
+
+    // Store screenshare latency to DB (for all users)
+    telemetryDB
+      .addEntry({
+        sessionId,
+        userId,
+        userName,
+        streamType: TelemetryStreamType.ScreenshareLatency,
+        timestamp: Date.now(),
+        value: screenshareLatency,
+      })
+      .catch((err) => console.error('Failed to store screenshare latency:', err))
+
+    // Store video bitrate to DB
+    telemetryDB
+      .addEntry({
+        sessionId,
+        userId,
+        userName,
+        streamType: TelemetryStreamType.VideoBitrate,
+        timestamp: Date.now(),
+        value: videoBitrate,
+      })
+      .catch((err) => console.error('Failed to store video bitrate:', err))
+
+    // Store audio bitrate to DB
+    telemetryDB
+      .addEntry({
+        sessionId,
+        userId,
+        userName,
+        streamType: TelemetryStreamType.AudioBitrate,
+        timestamp: Date.now(),
+        value: audioBitrate,
+      })
+      .catch((err) => console.error('Failed to store audio bitrate:', err))
+
+    // Store screenshare bitrate to DB
+    telemetryDB
+      .addEntry({
+        sessionId,
+        userId,
+        userName,
+        streamType: TelemetryStreamType.ScreenshareBitrate,
+        timestamp: Date.now(),
+        value: screenshareBitrate,
+      })
+      .catch((err) => console.error('Failed to store screenshare bitrate:', err))
   }
 }
