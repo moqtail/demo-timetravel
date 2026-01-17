@@ -1,9 +1,22 @@
+export type TelemetryStreamType =
+  | 'videoBitrate'
+  | 'audioBitrate'
+  | 'screenshareBitrate'
+  | 'videoLatency'
+  | 'audioLatency'
+  | 'screenshareLatency'
 export interface TelemetryEntry {
   id?: number
   sessionId: string
   userId: string
   userName?: string
-  streamType: 'video' | 'audio' | 'latency'
+  streamType:
+    | 'videoBitrate'
+    | 'audioBitrate'
+    | 'screenshareBitrate'
+    | 'videoLatency'
+    | 'audioLatency'
+    | 'screenshareLatency'
   timestamp: number
   value: number
 }
@@ -67,7 +80,7 @@ class TelemetryDB {
   async getEntries(
     sessionId?: string,
     userId?: string,
-    streamType?: 'video' | 'audio' | 'latency',
+    streamType?: TelemetryStreamType,
     limit?: number,
   ): Promise<TelemetryEntry[]> {
     const db = await this.openDB()

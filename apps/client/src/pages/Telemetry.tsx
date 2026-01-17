@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react'
 import { telemetryDB, TelemetryEntry, UserInfo } from '@/util/telemetryDB'
 import InfoTooltip from '@/components/InfoTooltip'
+import { TelemetryStreamType } from '@/util/telemetryDB'
 
 const Telemetry: React.FC = () => {
   const [sessions, setSessions] = useState<string[]>([])
   const [users, setUsers] = useState<UserInfo[]>([])
   const [selectedSession, setSelectedSession] = useState<string>('')
   const [selectedUser, setSelectedUser] = useState<string>('')
-  const [selectedStreamType, setSelectedStreamType] = useState<'video' | 'audio' | 'latency' | ''>('')
+  const [selectedStreamType, setSelectedStreamType] = useState<TelemetryStreamType | ''>('')
   const [data, setData] = useState<TelemetryEntry[]>([])
   const [loading, setLoading] = useState(false)
+  const [refreshInterval, setRefreshInterval] = useState<number | null>(1000)
 
   useEffect(() => {
     loadSessions()
@@ -27,6 +29,16 @@ const Telemetry: React.FC = () => {
   useEffect(() => {
     loadData()
   }, [selectedSession, selectedUser, selectedStreamType])
+
+  useEffect(() => {
+    if (!selectedSession || refreshInterval === null) return
+
+    const interval = setInterval(() => {
+      loadData()
+    }, refreshInterval)
+
+    return () => clearInterval(interval)
+  }, [selectedSession, selectedUser, selectedStreamType, refreshInterval])
 
   const loadSessions = async () => {
     try {
@@ -79,17 +91,17 @@ const Telemetry: React.FC = () => {
     return userName.length > 20 ? userName.substring(0, 17) + '...' : userName
   }
 
-  const getDataForStreamType = (streamType: 'video' | 'audio' | 'latency') => {
+  const getDataForStreamType = (streamType: TelemetryStreamType) => {
     return data.filter((entry) => entry.streamType === streamType)
   }
 
-  const getMaxValue = (streamType: 'video' | 'audio' | 'latency') => {
+  const getMaxValue = (streamType: TelemetryStreamType) => {
     const streamData = getDataForStreamType(streamType)
     if (streamData.length === 0) return 0
     return Math.max(...streamData.map((d) => d.value))
   }
 
-  const renderChart = (streamType: 'video' | 'audio' | 'latency', color: string, maxValue: number) => {
+  const renderChart = (streamType: TelemetryStreamType, color: string, maxValue: number) => {
     const streamData = getDataForStreamType(streamType)
     if (streamData.length === 0) return null
 
@@ -117,29 +129,48 @@ const Telemetry: React.FC = () => {
     )
   }
 
-  const getStreamTypeColor = (type: 'video' | 'audio' | 'latency') => {
+  const getStreamTypeColor = (type: TelemetryStreamType) => {
     switch (type) {
-      case 'video':
+      case 'videoBitrate':
         return '#3b82f6'
-      case 'audio':
+      case 'audioBitrate':
         return '#6b7280'
-      case 'latency':
+      case 'screenshareBitrate':
+        return '#8b5cf6'
+      case 'videoLatency':
         return '#ef4444'
+      case 'audioLatency':
+        return '#f97316'
+      case 'screenshareLatency':
+        return '#ec4892'
     }
   }
 
-  const getStreamTypeLabel = (type: 'video' | 'audio' | 'latency') => {
+  const getStreamTypeLabel = (type: TelemetryStreamType) => {
     switch (type) {
-      case 'video':
+      case 'videoBitrate':
         return 'Video Bitrate (Kbit/s)'
-      case 'audio':
+      case 'audioBitrate':
         return 'Audio Bitrate (Kbit/s)'
-      case 'latency':
-        return 'Latency (ms)'
+      case 'screenshareBitrate':
+        return 'Screenshare Bitrate (Kbit/s)'
+      case 'videoLatency':
+        return 'Video Latency (ms)'
+      case 'audioLatency':
+        return 'Audio Latency (ms)'
+      case 'screenshareLatency':
+        return 'Screenshare Latency (ms)'
     }
   }
 
-  const streamTypes: ('video' | 'audio' | 'latency')[] = ['video', 'audio', 'latency']
+  const streamTypes: TelemetryStreamType[] = [
+    'videoBitrate',
+    'audioBitrate',
+    'screenshareBitrate',
+    'videoLatency',
+    'audioLatency',
+    'screenshareLatency',
+  ]
   const activeStreamTypes = selectedStreamType ? [selectedStreamType] : streamTypes
 
   return (
@@ -168,7 +199,7 @@ const Telemetry: React.FC = () => {
 
         {/* Filters */}
         <div className="bg-gray-800 rounded-lg p-4 mb-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label className="block text-sm font-medium mb-2">Session ID</label>
               <select
@@ -210,9 +241,26 @@ const Telemetry: React.FC = () => {
                 className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
               >
                 <option value="">All Types</option>
-                <option value="video">Video</option>
-                <option value="audio">Audio</option>
-                <option value="latency">Latency</option>
+                <option value="videoBitrate">Video Bitrate</option>
+                <option value="audioBitrate">Audio Bitrate</option>
+                <option value="screenshareBitrate">Screenshare Bitrate</option>
+                <option value="videoLatency">Video Latency</option>
+                <option value="audioLatency">Audio Latency</option>
+                <option value="screenshareLatency">Screenshare Latency</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">Refresh Interval</label>
+              <select
+                value={refreshInterval === null ? '' : refreshInterval}
+                onChange={(e) => setRefreshInterval(e.target.value === '' ? null : parseInt(e.target.value))}
+                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+              >
+                <option value="1000">1 sec</option>
+                <option value="5000">5 sec</option>
+                <option value="15000">15 sec</option>
+                <option value="">None</option>
               </select>
             </div>
           </div>
@@ -223,7 +271,7 @@ const Telemetry: React.FC = () => {
           <div className="space-y-6">
             {activeStreamTypes.map((streamType) => {
               const streamData = getDataForStreamType(streamType)
-              const maxValue = getMaxValue(streamType) || (streamType === 'latency' ? 200 : 500)
+              const maxValue = getMaxValue(streamType) || (streamType.includes('latency') ? 200 : 500)
               const color = getStreamTypeColor(streamType)
 
               return (
@@ -245,7 +293,7 @@ const Telemetry: React.FC = () => {
                         <span className="text-2xl font-bold" style={{ color }}>
                           {streamData[streamData.length - 1]?.value.toFixed(1) || 'N/A'}
                         </span>
-                        <span className="text-gray-400 ml-2">{streamType === 'latency' ? 'ms' : 'Kbit/s'}</span>
+                        <span className="text-gray-400 ml-2">{streamType.includes('latency') ? 'ms' : 'Kbit/s'}</span>
                       </div>
 
                       {/* Chart */}
