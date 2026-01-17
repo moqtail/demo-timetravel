@@ -1,22 +1,24 @@
-export type TelemetryStreamType =
-  | 'videoBitrate'
-  | 'audioBitrate'
-  | 'screenshareBitrate'
-  | 'videoLatency'
-  | 'audioLatency'
-  | 'screenshareLatency'
+export enum TelemetryStreamType {
+  VideoBitrate = 'videoBitrate',
+  AudioBitrate = 'audioBitrate',
+  ScreenshareBitrate = 'screenshareBitrate',
+  VideoLatency = 'videoLatency',
+  AudioLatency = 'audioLatency',
+  ScreenshareLatency = 'screenshareLatency',
+  StartupLatency = 'startupLatency',
+  HdToSdToggleLatency = 'hdToSdToggleLatency',
+  SdToHdToggleLatency = 'sdToHdToggleLatency',
+  RewindLatency = 'rewindLatency',
+  AudioResubLatency = 'audioResubLatency',
+  VideoResubLatency = 'videoResubLatency',
+}
+
 export interface TelemetryEntry {
   id?: number
   sessionId: string
   userId: string
   userName?: string
-  streamType:
-    | 'videoBitrate'
-    | 'audioBitrate'
-    | 'screenshareBitrate'
-    | 'videoLatency'
-    | 'audioLatency'
-    | 'screenshareLatency'
+  streamType: TelemetryStreamType
   timestamp: number
   value: number
 }
@@ -29,6 +31,16 @@ export interface UserInfo {
 class TelemetryDB {
   private db: IDBDatabase | null = null
   private dbPromise: Promise<IDBDatabase> | null = null
+  private static instance: TelemetryDB
+
+  public static createInstance(): TelemetryDB {
+    if (!TelemetryDB.instance) {
+      TelemetryDB.instance = new TelemetryDB()
+    }
+    return TelemetryDB.instance
+  }
+
+  private constructor() {}
 
   private async openDB(): Promise<IDBDatabase> {
     if (this.db) return this.db
@@ -218,4 +230,4 @@ class TelemetryDB {
   }
 }
 
-export const telemetryDB = new TelemetryDB()
+export const telemetryDB = TelemetryDB.createInstance()

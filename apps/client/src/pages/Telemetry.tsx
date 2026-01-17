@@ -12,8 +12,8 @@ const Telemetry: React.FC = () => {
   const [selectedStreamType, setSelectedStreamType] = useState<TelemetryStreamType | ''>('')
   const [data, setData] = useState<TelemetryEntry[]>([])
   const [loading, setLoading] = useState(false)
-  const [refreshInterval, setRefreshInterval] = useState<number | null>(1000)
-  const [timeWindow, setTimeWindow] = useState<number | null>(30000) // in milliseconds, null for full session
+  const [refreshInterval, setRefreshInterval] = useState<number | null>(null)
+  const [timeWindow, setTimeWindow] = useState<number | null>(null) // in milliseconds, null for full session
 
   useEffect(() => {
     loadSessions()
@@ -114,52 +114,100 @@ const Telemetry: React.FC = () => {
     return Math.max(...streamData.map((d) => d.value))
   }
 
-  const formatTimeLabel = (timestamp: number) => {
-    const date = new Date(timestamp)
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  }
-
   const getStreamTypeColor = (type: TelemetryStreamType) => {
     switch (type) {
-      case 'videoBitrate':
+      case TelemetryStreamType.VideoBitrate:
         return '#3b82f6'
-      case 'audioBitrate':
+      case TelemetryStreamType.AudioBitrate:
         return '#6b7280'
-      case 'screenshareBitrate':
+      case TelemetryStreamType.ScreenshareBitrate:
         return '#8b5cf6'
-      case 'videoLatency':
+      case TelemetryStreamType.VideoLatency:
         return '#ef4444'
-      case 'audioLatency':
+      case TelemetryStreamType.AudioLatency:
         return '#f97316'
-      case 'screenshareLatency':
+      case TelemetryStreamType.ScreenshareLatency:
         return '#ec4892'
+      case TelemetryStreamType.StartupLatency:
+        return '#10b981'
+      case TelemetryStreamType.HdToSdToggleLatency:
+        return '#14b8a6'
+      case TelemetryStreamType.SdToHdToggleLatency:
+        return '#0ea5e9'
+      case TelemetryStreamType.RewindLatency:
+        return '#f59e0b'
+      case TelemetryStreamType.AudioResubLatency:
+        return '#6366f1'
+      case TelemetryStreamType.VideoResubLatency:
+        return '#f43f5e'
+      default:
+        return '#cccccc'
     }
   }
 
   const getStreamTypeLabel = (type: TelemetryStreamType) => {
     switch (type) {
-      case 'videoBitrate':
-        return 'Video Bitrate (Kbit/s)'
-      case 'audioBitrate':
-        return 'Audio Bitrate (Kbit/s)'
-      case 'screenshareBitrate':
-        return 'Screenshare Bitrate (Kbit/s)'
-      case 'videoLatency':
-        return 'Video Latency (ms)'
-      case 'audioLatency':
-        return 'Audio Latency (ms)'
-      case 'screenshareLatency':
-        return 'Screenshare Latency (ms)'
+      case TelemetryStreamType.VideoBitrate:
+        return `Video Bitrate (${getStreamTypeUnit(type)})`
+      case TelemetryStreamType.AudioBitrate:
+        return `Audio Bitrate (${getStreamTypeUnit(type)})`
+      case TelemetryStreamType.ScreenshareBitrate:
+        return `Screenshare Bitrate (${getStreamTypeUnit(type)})`
+      case TelemetryStreamType.VideoLatency:
+        return `Video Latency (${getStreamTypeUnit(type)})`
+      case TelemetryStreamType.AudioLatency:
+        return `Audio Latency (${getStreamTypeUnit(type)})`
+      case TelemetryStreamType.ScreenshareLatency:
+        return `Screenshare Latency (${getStreamTypeUnit(type)})`
+      case TelemetryStreamType.StartupLatency:
+        return `Startup Latency (${getStreamTypeUnit(type)})`
+      case TelemetryStreamType.HdToSdToggleLatency:
+        return `HD to SD Toggle Latency (${getStreamTypeUnit(type)})`
+      case TelemetryStreamType.SdToHdToggleLatency:
+        return `SD to HD Toggle Latency (${getStreamTypeUnit(type)})`
+      case TelemetryStreamType.RewindLatency:
+        return `Rewind Latency (${getStreamTypeUnit(type)})`
+      case TelemetryStreamType.AudioResubLatency:
+        return `Audio Resubscription Latency (${getStreamTypeUnit(type)})`
+      case TelemetryStreamType.VideoResubLatency:
+        return `Video Resubscription Latency (${getStreamTypeUnit(type)})`
+    }
+  }
+
+  const getStreamTypeUnit = (type: TelemetryStreamType): string => {
+    switch (type) {
+      case TelemetryStreamType.VideoBitrate:
+      case TelemetryStreamType.AudioBitrate:
+      case TelemetryStreamType.ScreenshareBitrate:
+        return 'Kbit/s'
+      case TelemetryStreamType.VideoLatency:
+      case TelemetryStreamType.AudioLatency:
+      case TelemetryStreamType.ScreenshareLatency:
+      case TelemetryStreamType.StartupLatency:
+      case TelemetryStreamType.HdToSdToggleLatency:
+      case TelemetryStreamType.SdToHdToggleLatency:
+      case TelemetryStreamType.RewindLatency:
+      case TelemetryStreamType.AudioResubLatency:
+      case TelemetryStreamType.VideoResubLatency:
+        return 'ms'
+      default:
+        return ''
     }
   }
 
   const streamTypes: TelemetryStreamType[] = [
-    'videoBitrate',
-    'audioBitrate',
-    'screenshareBitrate',
-    'videoLatency',
-    'audioLatency',
-    'screenshareLatency',
+    TelemetryStreamType.VideoBitrate,
+    TelemetryStreamType.AudioBitrate,
+    TelemetryStreamType.ScreenshareBitrate,
+    TelemetryStreamType.VideoLatency,
+    TelemetryStreamType.AudioLatency,
+    TelemetryStreamType.ScreenshareLatency,
+    TelemetryStreamType.StartupLatency,
+    TelemetryStreamType.HdToSdToggleLatency,
+    TelemetryStreamType.SdToHdToggleLatency,
+    TelemetryStreamType.RewindLatency,
+    TelemetryStreamType.AudioResubLatency,
+    TelemetryStreamType.VideoResubLatency,
   ]
   const activeStreamTypes = selectedStreamType ? [selectedStreamType] : streamTypes
 
@@ -231,12 +279,11 @@ const Telemetry: React.FC = () => {
                 className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
               >
                 <option value="">All Types</option>
-                <option value="videoBitrate">Video Bitrate</option>
-                <option value="audioBitrate">Audio Bitrate</option>
-                <option value="screenshareBitrate">Screenshare Bitrate</option>
-                <option value="videoLatency">Video Latency</option>
-                <option value="audioLatency">Audio Latency</option>
-                <option value="screenshareLatency">Screenshare Latency</option>
+                {streamTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {getStreamTypeLabel(type)}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -279,7 +326,8 @@ const Telemetry: React.FC = () => {
           <div className="space-y-6">
             {activeStreamTypes.map((streamType) => {
               const streamData = getDataForStreamType(streamType)
-              const maxValue = getMaxValue(streamType) || (streamType.includes('latency') ? 200 : 500)
+              const unit = getStreamTypeUnit(streamType)
+              const maxValue = getMaxValue(streamType) || (unit === 'ms' ? 200 : 500)
               const color = getStreamTypeColor(streamType)
 
               return (
@@ -301,7 +349,7 @@ const Telemetry: React.FC = () => {
                         <span className="text-2xl font-bold" style={{ color }}>
                           {streamData[streamData.length - 1]?.value.toFixed(1) || 'N/A'}
                         </span>
-                        <span className="text-gray-400 ml-2">{streamType.includes('latency') ? 'ms' : 'Kbit/s'}</span>
+                        <span className="text-gray-400 ml-2">{unit}</span>
                       </div>
 
                       {/* Chart */}
