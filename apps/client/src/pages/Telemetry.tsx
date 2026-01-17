@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { telemetryDB, TelemetryEntry, UserInfo } from '@/util/telemetryDB'
 import InfoTooltip from '@/components/InfoTooltip'
+import TelemetryChart from '@/components/TelemetryChart'
 import { TelemetryStreamType } from '@/util/telemetryDB'
 
 const Telemetry: React.FC = () => {
@@ -12,6 +13,7 @@ const Telemetry: React.FC = () => {
   const [data, setData] = useState<TelemetryEntry[]>([])
   const [loading, setLoading] = useState(false)
   const [refreshInterval, setRefreshInterval] = useState<number | null>(1000)
+  const [timeWindow, setTimeWindow] = useState<number | null>(30000) // in milliseconds, null for full session
 
   useEffect(() => {
     loadSessions()
@@ -95,38 +97,26 @@ const Telemetry: React.FC = () => {
     return data.filter((entry) => entry.streamType === streamType)
   }
 
-  const getMaxValue = (streamType: TelemetryStreamType) => {
+  const getFilteredDataByTimeWindow = (streamType: TelemetryStreamType) => {
     const streamData = getDataForStreamType(streamType)
+    if (streamData.length === 0) return []
+
+    // If timeWindow is null, return all data (Full Session)
+    if (timeWindow === null) return streamData
+
+    const now = Date.now()
+    return streamData.filter((entry) => now - entry.timestamp <= timeWindow)
+  }
+
+  const getMaxValue = (streamType: TelemetryStreamType) => {
+    const streamData = getFilteredDataByTimeWindow(streamType)
     if (streamData.length === 0) return 0
     return Math.max(...streamData.map((d) => d.value))
   }
 
-  const renderChart = (streamType: TelemetryStreamType, color: string, maxValue: number) => {
-    const streamData = getDataForStreamType(streamType)
-    if (streamData.length === 0) return null
-
-    const points = streamData
-      .map((entry, index) => {
-        const x = (index / Math.max(streamData.length - 1, 1)) * 300
-        const y = 100 - Math.min((entry.value / maxValue) * 100, 100)
-        return `${x},${y}`
-      })
-      .join(' ')
-
-    return (
-      <div className="absolute inset-0 p-2">
-        <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
-          <polyline
-            fill="none"
-            stroke={color}
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            points={points}
-          />
-        </svg>
-      </div>
-    )
+  const formatTimeLabel = (timestamp: number) => {
+    const date = new Date(timestamp)
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }
 
   const getStreamTypeColor = (type: TelemetryStreamType) => {
@@ -264,6 +254,24 @@ const Telemetry: React.FC = () => {
               </select>
             </div>
           </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Time Window</label>
+              <select
+                value={timeWindow === null ? '' : timeWindow}
+                onChange={(e) => setTimeWindow(e.target.value === '' ? null : parseInt(e.target.value))}
+                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+              >
+                <option value="">Full Session</option>
+                <option value="30000">Last 30 sec</option>
+                <option value="60000">Last 1 min</option>
+                <option value="300000">Last 5 min</option>
+                <option value="900000">Last 15 min</option>
+                <option value="3600000">Last 1 hour</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         {/* Charts */}
@@ -297,24 +305,15 @@ const Telemetry: React.FC = () => {
                       </div>
 
                       {/* Chart */}
-                      <div className="relative h-32 bg-gray-50 rounded border border-gray-200">
-                        {/* Y-axis labels */}
-                        <div className="absolute left-1 top-1 text-xs text-gray-500 leading-none">
-                          {maxValue.toFixed(0)}
-                        </div>
-                        <div className="absolute left-1 top-1/2 text-xs text-gray-500 leading-none">
-                          {(maxValue / 2).toFixed(0)}
-                        </div>
-                        <div className="absolute left-1 bottom-1 text-xs text-gray-500 leading-none">0</div>
-
-                        {/* Grid lines */}
-                        <div className="absolute inset-0 flex flex-col justify-between p-1">
-                          {[...Array(3)].map((_, i) => (
-                            <div key={i} className="border-t border-gray-300 opacity-30"></div>
-                          ))}
-                        </div>
-
-                        {renderChart(streamType, color, maxValue)}
+                      <div className="mt-4">
+                        <TelemetryChart
+                          data={streamData}
+                          streamType={streamType}
+                          color={color}
+                          maxValue={maxValue}
+                          timeWindow={timeWindow}
+                          label={getStreamTypeLabel(streamType)}
+                        />
                       </div>
 
                       {/* Stats */}
