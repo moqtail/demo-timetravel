@@ -74,7 +74,7 @@ import { MOQtailClient } from 'moqtail-ts/client'
 import { NetworkTelemetry, ClockNormalizer } from 'moqtail-ts/util'
 import { RewindPlayer } from './RewindPlayer'
 import { BufferedMoqtObject } from '@/composables/rewindBuffer'
-import { TestMetricsManager } from '@/util/testMetrics'
+import { TelemetryManager } from '@/util/telemetryManager'
 
 function SessionPage() {
   // initialize the MOQTail client
@@ -112,16 +112,29 @@ function SessionPage() {
       screenshareLatency: number
       videoBitrate: number
       audioBitrate: number
+      screenshareBitrate: number
     }
   }>({})
   const telemetryInstances = useRef<{
     [userId: string]: { video: NetworkTelemetry; audio: NetworkTelemetry; screenshare: NetworkTelemetry }
   }>({})
+  const generateSessionId = () => {
+    const now = new Date()
+    const yyyy = now.getFullYear()
+    const mm = String(now.getMonth() + 1).padStart(2, '0')
+    const dd = String(now.getDate()).padStart(2, '0')
+    const hh = String(now.getHours()).padStart(2, '0')
+    const min = String(now.getMinutes()).padStart(2, '0')
+    const ss = String(now.getSeconds()).padStart(2, '0')
+    return `${yyyy}${mm}${dd}-${hh}${min}${ss}-${roomState?.name}-${username}`
+  }
+  const sessionId = useRef<string>(generateSessionId())
   const [videoLatencyHistory, setVideoLatencyHistory] = useState<{ [userId: string]: number[] }>({})
   const [audioLatencyHistory, setAudioLatencyHistory] = useState<{ [userId: string]: number[] }>({})
   const [screenshareLatencyHistory, setScreenshareLatencyHistory] = useState<{ [userId: string]: number[] }>({})
   const [videoBitrateHistory, setVideoBitrateHistory] = useState<{ [userId: string]: number[] }>({})
   const [audioBitrateHistory, setAudioBitrateHistory] = useState<{ [userId: string]: number[] }>({})
+  const [screenshareBitrateHistory, setScreenshareBitrateHistory] = useState<{ [userId: string]: number[] }>({})
   const [timeRemaining, setTimeRemaining] = useState<string>('--:--')
   const [timeRemainingColor, setTimeRemainingColor] = useState<string>('text-green-400')
   const selfVideoRef = useRef<HTMLVideoElement>(null)
@@ -221,7 +234,7 @@ function SessionPage() {
   const [pendingHDRequests, setPendingHDRequests] = useState<Set<string>>(new Set())
 
   // Test Metrics Manager
-  const testMetricsManagerRef = useRef<TestMetricsManager>(new TestMetricsManager())
+  const telemetryManagerRef = useRef<TelemetryManager>(new TelemetryManager())
   const startupLatencyTracked = useRef<boolean>(false)
 
   useEffect(() => {
@@ -351,7 +364,7 @@ function SessionPage() {
     // Track rewind button pressed
     const user = users[userId]
     if (user) {
-      testMetricsManagerRef.current.trackRewindButtonPressed(userId)
+      telemetryManagerRef.current.trackRewindButtonPressed(sessionId.current, userId)
     }
 
     setIsFetching(true)
@@ -538,28 +551,19 @@ function SessionPage() {
       return words[0].substring(0, 2).toUpperCase()
     } else {
       return words
-
         .slice(0, 2)
-
         .map((word) => word.charAt(0))
-
         .join('')
-
         .toUpperCase()
     }
   }
 
   const availableColors = [
     { bgClass: 'bg-blue-500', hexColor: '#3b82f6' },
-
     { bgClass: 'bg-green-500', hexColor: '#22c55e' },
-
     { bgClass: 'bg-purple-500', hexColor: '#a855f7' },
-
     { bgClass: 'bg-red-500', hexColor: '#ff0000' },
-
     { bgClass: 'bg-orange-500', hexColor: '#f97316' },
-
     { bgClass: 'bg-teal-500', hexColor: '#14b8a6' },
   ]
 
@@ -752,7 +756,7 @@ function SessionPage() {
 
     // Track quality toggle start
     const direction = currentQuality === 'HD' && newQuality === 'SD' ? 'HD->SD' : 'SD->HD'
-    testMetricsManagerRef.current.trackQualityToggleStart(targetUserId, direction)
+    telemetryManagerRef.current.trackQualityToggleStart(sessionId.current, targetUserId, direction)
 
     try {
       if (currentQuality === 'HD' && newQuality === 'SD') {
@@ -1262,7 +1266,7 @@ function SessionPage() {
           })
 
           if (anyUserHasMedia) {
-            testMetricsManagerRef.current.trackStartupJoinButtonClick('global')
+            telemetryManagerRef.current.trackStartupJoinButtonClick('global')
           } else {
             console.log('Startup Latency: N/A')
             startupLatencyTracked.current = true
@@ -1431,7 +1435,7 @@ function SessionPage() {
         return newSet
       })
 
-      testMetricsManagerRef.current.trackQualityToggleStart(targetUserId, 'SD->HD')
+      telemetryManagerRef.current.trackQualityToggleStart(sessionId.current, targetUserId, 'SD->HD')
 
       // First, set the quality to HD so the track-updated handler will auto-subscribe
       setUserVideoQualities((prev) => {
@@ -1474,7 +1478,7 @@ function SessionPage() {
         return newSet
       })
 
-      testMetricsManagerRef.current.trackQualityToggleStart(targetUserId, 'SD->HD')
+      telemetryManagerRef.current.trackQualityToggleStart(sessionId.current, targetUserId, 'SD->HD')
 
       manualQualityTransitionsRef.current.add(targetUserId)
 
@@ -1569,6 +1573,11 @@ function SessionPage() {
         return newHistory
       })
       setAudioBitrateHistory((prev) => {
+        const newHistory = { ...prev }
+        delete newHistory[msg.userId]
+        return newHistory
+      })
+      setScreenshareBitrateHistory((prev) => {
         const newHistory = { ...prev }
         delete newHistory[msg.userId]
         return newHistory
@@ -1714,6 +1723,7 @@ function SessionPage() {
       screenshareLatency: number
       videoBitrate: number
       audioBitrate: number
+      screenshareBitrate: number
     }
   }>({})
 
@@ -1727,6 +1737,7 @@ function SessionPage() {
           screenshareLatency: number
           videoBitrate: number
           audioBitrate: number
+          screenshareBitrate: number
         }
       } = {}
 
@@ -1738,6 +1749,7 @@ function SessionPage() {
           const screenshareLatency = isSelf(userId) ? 0 : Math.round(telemetry.screenshare.latency)
           const videoBitrate = (telemetry.video.throughput * 8) / 1000 // bytes/s to Kbps
           const audioBitrate = (telemetry.audio.throughput * 8) / 1000 // bytes/s to Kbps
+          const screenshareBitrate = (telemetry.screenshare.throughput * 8) / 1000 // bytes/s to Kbps
 
           newTelemetryData[userId] = {
             videoLatency,
@@ -1745,6 +1757,7 @@ function SessionPage() {
             screenshareLatency,
             videoBitrate: Math.max(0, videoBitrate),
             audioBitrate: Math.max(0, audioBitrate),
+            screenshareBitrate: Math.max(0, screenshareBitrate),
           }
 
           // Video Latency history (last 30 points)
@@ -1798,6 +1811,29 @@ function SessionPage() {
               [userId]: newHistory,
             }
           })
+
+          setScreenshareBitrateHistory((prevScreenshareBitrate) => {
+            const userHistory = prevScreenshareBitrate[userId] || []
+            const newHistory = [...userHistory, screenshareBitrate].slice(-30)
+            return {
+              ...prevScreenshareBitrate,
+              [userId]: newHistory,
+            }
+          })
+
+          // Store all latency and bitrate telemetry to DB via TelemetryManager
+          telemetryManagerRef.current.trackLatencyAndBitrate(
+            sessionId.current,
+            userId,
+            users[userId]?.name || userId,
+            videoLatency,
+            audioLatency,
+            screenshareLatency,
+            videoBitrate,
+            audioBitrate,
+            screenshareBitrate,
+            isSelf(userId),
+          )
         }
       })
 
@@ -2046,7 +2082,7 @@ function SessionPage() {
         const onFirstFrameCallback = () => {
           if (!startupLatencyTracked.current) {
             startupLatencyTracked.current = true
-            testMetricsManagerRef.current.trackStartupFirstFrame('global', 'First user', true)
+            telemetryManagerRef.current.trackStartupFirstFrame(sessionId.current, 'global', 'First user', true)
           }
         }
 
@@ -2207,7 +2243,7 @@ function SessionPage() {
 
         const user = currentUsers[targetUserId]
         if (user) {
-          testMetricsManagerRef.current.trackQualityToggleComplete(targetUserId, user.name)
+          telemetryManagerRef.current.trackQualityToggleComplete(sessionId.current, targetUserId, user.name)
         }
 
         return true
@@ -2268,7 +2304,7 @@ function SessionPage() {
 
         const user = usersRef.current[targetUserId]
         if (user) {
-          testMetricsManagerRef.current.trackQualityToggleComplete(targetUserId, user.name)
+          telemetryManagerRef.current.trackQualityToggleComplete(sessionId.current, targetUserId, user.name)
         }
 
         return true
@@ -2377,11 +2413,8 @@ function SessionPage() {
       return
     }
 
-    let unsubscriptionSuccess = false
-
     try {
       await client.unsubscribe(requestId)
-      unsubscriptionSuccess = true
     } catch (error) {
       console.error(`Failed to unsubscribe from ${targetUserId} screenshare:`, error)
     }
@@ -2610,7 +2643,7 @@ function SessionPage() {
         )
       } else if (needsVideoSub) {
         // Track video resub start (when user clicks to resub)
-        testMetricsManagerRef.current.trackVideoResubStart(targetUserId)
+        telemetryManagerRef.current.trackVideoResubStart(sessionId.current, targetUserId)
 
         const videoFullTrackName = getTrackname(roomName, targetUserId, 'video')
         initializeTelemetryForUser(targetUserId)
@@ -2641,7 +2674,7 @@ function SessionPage() {
             // Track video resub complete
             const user = usersRef.current[targetUserId]
             if (user) {
-              testMetricsManagerRef.current.trackVideoResubComplete(targetUserId, user.name)
+              telemetryManagerRef.current.trackVideoResubComplete(sessionId.current, targetUserId, user.name)
             }
           } else {
             console.error(`Video subscription failed for ${targetUserId}`)
@@ -2651,7 +2684,7 @@ function SessionPage() {
         }
       } else if (needsAudioSub) {
         // Track audio resub start (when user clicks to resub)
-        testMetricsManagerRef.current.trackAudioResubStart(targetUserId)
+        telemetryManagerRef.current.trackAudioResubStart(sessionId.current, targetUserId)
 
         const audioFullTrackName = getTrackname(roomName, targetUserId, 'audio')
         initializeTelemetryForUser(targetUserId)
@@ -2679,7 +2712,7 @@ function SessionPage() {
             // Track audio resub complete
             const user = usersRef.current[targetUserId]
             if (user) {
-              testMetricsManagerRef.current.trackAudioResubComplete(targetUserId, user.name)
+              telemetryManagerRef.current.trackAudioResubComplete(sessionId.current, targetUserId, user.name)
             }
           } else {
             console.error(`Audio subscription failed for ${targetUserId}`)
@@ -2866,6 +2899,9 @@ function SessionPage() {
               {getUserCount()} participant{userCount > 1 ? 's' : ''}
             </span>
           </div>
+          <a href="/telemetry" target="_blank" className="text-blue-400 hover:text-blue-300 text-sm underline">
+            View Telemetry
+          </a>
         </div>
         <div className={`flex items-center space-x-2 ${timeRemainingColor}`}>
           <span className="text-base font-semibold">⏱️ Time left: {timeRemaining}</span>
@@ -3220,6 +3256,18 @@ function SessionPage() {
                                       : 'N/A'}
                                   </span>
                                 </div>
+                                {/* Screenshare Bitrate */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                                    <span className="text-xs font-medium text-gray-700">SCREEN</span>
+                                  </div>
+                                  <span className="text-xs font-bold text-black">
+                                    {telemetryData[user.id]
+                                      ? `${telemetryData[user.id].screenshareBitrate.toFixed(0)} Kbit/s`
+                                      : 'N/A'}
+                                  </span>
+                                </div>
                               </div>
                             </div>
 
@@ -3336,6 +3384,33 @@ function SessionPage() {
                                               const x =
                                                 (index / Math.max(audioBitrateHistory[user.id].length - 1, 1)) * 300
                                               const y = 100 - Math.min((audioBitrate / 1500) * 100, 100)
+                                              return `${x},${y}`
+                                            })
+                                            .join(' ')
+                                        : ''
+                                    }
+                                  />
+                                </svg>
+                              </div>
+
+                              {/* Screenshare bitrate line */}
+                              <div className="absolute inset-0 p-2">
+                                <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
+                                  <polyline
+                                    fill="none"
+                                    stroke="#8b5cf6"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    points={
+                                      screenshareBitrateHistory[user.id] &&
+                                      screenshareBitrateHistory[user.id].length > 0
+                                        ? screenshareBitrateHistory[user.id]
+                                            .map((screenshareBitrate, index) => {
+                                              const x =
+                                                (index / Math.max(screenshareBitrateHistory[user.id].length - 1, 1)) *
+                                                300
+                                              const y = 100 - Math.min((screenshareBitrate / 1500) * 100, 100)
                                               return `${x},${y}`
                                             })
                                             .join(' ')
@@ -3775,7 +3850,7 @@ function SessionPage() {
           onPlaybackStarted={() => {
             const user = users[selectedRewindUserId]
             if (user) {
-              testMetricsManagerRef.current.trackRewindPlaybackStarted(selectedRewindUserId, user.name)
+              telemetryManagerRef.current.trackRewindPlaybackStarted(sessionId.current, selectedRewindUserId, user.name)
             }
           }}
         />

@@ -342,8 +342,8 @@ export default function JoinPage() {
           {roomLimits.sessionDurationMinutes !== 1 ? 's' : ''} and session size is limited to{' '}
           {roomLimits.maxUsersPerRoom} participants.
           {commitHash && (
-            <>
-              Commit:{' '}
+            <span>
+              Commit:
               <a
                 href={`https://github.com/moqtail/demo-timetravel/commit/${commitHash}`}
                 target="_blank"
@@ -352,7 +352,7 @@ export default function JoinPage() {
               >
                 {commitHash}
               </a>
-            </>
+            </span>
           )}
         </div>
         {error && <div className="error-message">{error}</div>}
