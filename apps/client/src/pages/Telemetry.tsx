@@ -93,6 +93,52 @@ const Telemetry: React.FC = () => {
     return userName.length > 20 ? userName.substring(0, 17) + '...' : userName
   }
 
+  const exportToCSV = async () => {
+    if (!selectedSession) return
+
+    try {
+      const allEntries = await telemetryDB.getEntries(selectedSession)
+
+      if (allEntries.length === 0) {
+        alert('No data to export for this session')
+        return
+      }
+
+      // Create CSV header
+      const headers = ['Session ID', 'User ID', 'User Name', 'Stream Type', 'Unit', 'Timestamp', 'Value']
+      const csvContent = [
+        headers.join(','),
+        ...allEntries.map((entry) =>
+          [
+            entry.sessionId,
+            entry.userId,
+            entry.userName || '',
+            entry.streamType,
+            getStreamTypeUnit(entry.streamType as TelemetryStreamType),
+            new Date(entry.timestamp).toISOString(),
+            entry.value,
+          ]
+            .map((field) => `"${String(field).replace(/"/g, '""')}"`)
+            .join(','),
+        ),
+      ].join('\n')
+
+      // Create blob and download
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+      const link = document.createElement('a')
+      const url = URL.createObjectURL(blob)
+      link.setAttribute('href', url)
+      link.setAttribute('download', `telemetry-${selectedSession}-${new Date().toISOString().slice(0, 10)}.csv`)
+      link.style.visibility = 'hidden'
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    } catch (error) {
+      console.error('Failed to export data:', error)
+      alert('Failed to export data')
+    }
+  }
+
   const getDataForStreamType = (streamType: TelemetryStreamType) => {
     return data.filter((entry) => entry.streamType === streamType)
   }
@@ -302,7 +348,7 @@ const Telemetry: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
             <div>
               <label className="block text-sm font-medium mb-2">Time Window</label>
               <select
@@ -318,6 +364,18 @@ const Telemetry: React.FC = () => {
                 <option value="3600000">Last 1 hour</option>
               </select>
             </div>
+
+            {/* Export Button */}
+            {selectedSession && (
+              <div className="pt-7">
+                <button
+                  onClick={exportToCSV}
+                  className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded font-medium transition-colors"
+                >
+                  📥 Export to CSV
+                </button>
+              </div>
+            )}
           </div>
         </div>
 

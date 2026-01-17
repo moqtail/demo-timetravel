@@ -113,6 +113,7 @@ function SessionPage() {
       screenshareLatency: number
       videoBitrate: number
       audioBitrate: number
+      screenshareBitrate: number
     }
   }>({})
   const telemetryInstances = useRef<{
@@ -126,7 +127,7 @@ function SessionPage() {
     const hh = String(now.getHours()).padStart(2, '0')
     const min = String(now.getMinutes()).padStart(2, '0')
     const ss = String(now.getSeconds()).padStart(2, '0')
-    return `${roomState?.name}-${username}-${yyyy}${mm}${dd}-${hh}${min}${ss}`
+    return `${yyyy}${mm}${dd}-${hh}${min}${ss}-${roomState?.name}-${username}`
   }
   const sessionId = useRef<string>(generateSessionId())
   const [videoLatencyHistory, setVideoLatencyHistory] = useState<{ [userId: string]: number[] }>({})
@@ -1577,6 +1578,11 @@ function SessionPage() {
         delete newHistory[msg.userId]
         return newHistory
       })
+      setScreenshareBitrateHistory((prev) => {
+        const newHistory = { ...prev }
+        delete newHistory[msg.userId]
+        return newHistory
+      })
       // Clean up user color
 
       setUserColors((prev) => {
@@ -1718,6 +1724,7 @@ function SessionPage() {
       screenshareLatency: number
       videoBitrate: number
       audioBitrate: number
+      screenshareBitrate: number
     }
   }>({})
 
@@ -2464,11 +2471,8 @@ function SessionPage() {
       return
     }
 
-    let unsubscriptionSuccess = false
-
     try {
       await client.unsubscribe(requestId)
-      unsubscriptionSuccess = true
     } catch (error) {
       console.error(`Failed to unsubscribe from ${targetUserId} screenshare:`, error)
     }
@@ -3310,6 +3314,18 @@ function SessionPage() {
                                       : 'N/A'}
                                   </span>
                                 </div>
+                                {/* Screenshare Bitrate */}
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center space-x-1">
+                                    <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                                    <span className="text-xs font-medium text-gray-700">SCREEN</span>
+                                  </div>
+                                  <span className="text-xs font-bold text-black">
+                                    {telemetryData[user.id]
+                                      ? `${telemetryData[user.id].screenshareBitrate.toFixed(0)} Kbit/s`
+                                      : 'N/A'}
+                                  </span>
+                                </div>
                               </div>
                             </div>
 
@@ -3426,6 +3442,33 @@ function SessionPage() {
                                               const x =
                                                 (index / Math.max(audioBitrateHistory[user.id].length - 1, 1)) * 300
                                               const y = 100 - Math.min((audioBitrate / 1500) * 100, 100)
+                                              return `${x},${y}`
+                                            })
+                                            .join(' ')
+                                        : ''
+                                    }
+                                  />
+                                </svg>
+                              </div>
+
+                              {/* Screenshare bitrate line */}
+                              <div className="absolute inset-0 p-2">
+                                <svg className="w-full h-full" viewBox="0 0 300 100" preserveAspectRatio="none">
+                                  <polyline
+                                    fill="none"
+                                    stroke="#8b5cf6"
+                                    strokeWidth="1.5"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    points={
+                                      screenshareBitrateHistory[user.id] &&
+                                      screenshareBitrateHistory[user.id].length > 0
+                                        ? screenshareBitrateHistory[user.id]
+                                            .map((screenshareBitrate, index) => {
+                                              const x =
+                                                (index / Math.max(screenshareBitrateHistory[user.id].length - 1, 1)) *
+                                                300
+                                              const y = 100 - Math.min((screenshareBitrate / 1500) * 100, 100)
                                               return `${x},${y}`
                                             })
                                             .join(' ')
