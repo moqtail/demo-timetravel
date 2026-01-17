@@ -2,9 +2,15 @@ export interface TelemetryEntry {
   id?: number
   sessionId: string
   userId: string
+  userName?: string
   streamType: 'video' | 'audio' | 'latency'
   timestamp: number
   value: number
+}
+
+export interface UserInfo {
+  userId: string
+  userName: string
 }
 
 class TelemetryDB {
@@ -16,7 +22,7 @@ class TelemetryDB {
 
     if (!this.dbPromise) {
       this.dbPromise = new Promise((resolve, reject) => {
-        const request = indexedDB.open('TelemetryDB', 1)
+        const request = indexedDB.open('TelemetryDB', 2)
 
         request.onerror = () => reject(request.error)
         request.onsuccess = () => {
@@ -26,12 +32,19 @@ class TelemetryDB {
 
         request.onupgradeneeded = (event) => {
           const db = (event.target as IDBOpenDBRequest).result
+
+          // Delete existing store if it exists to ensure clean schema
+          if (db.objectStoreNames.contains('telemetry')) {
+            db.deleteObjectStore('telemetry')
+          }
+
           const store = db.createObjectStore('telemetry', { keyPath: 'id', autoIncrement: true })
 
           store.createIndex('sessionId', 'sessionId', { unique: false })
           store.createIndex('userId', 'userId', { unique: false })
           store.createIndex('streamType', 'streamType', { unique: false })
           store.createIndex('timestamp', 'timestamp', { unique: false })
+          store.createIndex('sessionUser', ['sessionId', 'userId'], { unique: false })
           store.createIndex('sessionUserStream', ['sessionId', 'userId', 'streamType'], { unique: false })
         }
       })
@@ -61,12 +74,18 @@ class TelemetryDB {
     const transaction = db.transaction(['telemetry'], 'readonly')
     const store = transaction.objectStore('telemetry')
 
+    console.log('Getting entries with:', { sessionId, userId, streamType, limit })
+
     return new Promise((resolve, reject) => {
       let request: IDBRequest
 
       if (sessionId && userId && streamType) {
         const index = store.index('sessionUserStream')
         const range = IDBKeyRange.only([sessionId, userId, streamType])
+        request = index.openCursor(range)
+      } else if (sessionId && userId) {
+        const index = store.index('sessionUser')
+        const range = IDBKeyRange.only([sessionId, userId])
         request = index.openCursor(range)
       } else if (sessionId) {
         const index = store.index('sessionId')
@@ -125,7 +144,7 @@ class TelemetryDB {
     })
   }
 
-  async getUsers(sessionId?: string): Promise<string[]> {
+  async getUsers(sessionId?: string): Promise<UserInfo[]> {
     const db = await this.openDB()
     const transaction = db.transaction(['telemetry'], 'readonly')
     const store = transaction.objectStore('telemetry')
@@ -140,15 +159,19 @@ class TelemetryDB {
         request = store.openCursor()
       }
 
-      const users = new Set<string>()
+      const usersMap = new Map<string, string>()
 
       request.onsuccess = (event) => {
         const cursor = (event.target as IDBRequest).result
         if (cursor) {
-          users.add(cursor.value.userId)
+          const { userId, userName } = cursor.value
+          usersMap.set(userId, userName || userId)
           cursor.continue()
         } else {
-          resolve(Array.from(users).sort())
+          const users = Array.from(usersMap.entries())
+            .map(([userId, userName]) => ({ userId, userName }))
+            .sort((a, b) => a.userName.localeCompare(b.userName))
+          resolve(users)
         }
       }
 

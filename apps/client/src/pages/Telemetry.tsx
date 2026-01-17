@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react'
-import { telemetryDB, TelemetryEntry } from '@/util/telemetryDB'
+import { telemetryDB, TelemetryEntry, UserInfo } from '@/util/telemetryDB'
+import InfoTooltip from '@/components/InfoTooltip'
 
 const Telemetry: React.FC = () => {
   const [sessions, setSessions] = useState<string[]>([])
-  const [users, setUsers] = useState<string[]>([])
+  const [users, setUsers] = useState<UserInfo[]>([])
   const [selectedSession, setSelectedSession] = useState<string>('')
   const [selectedUser, setSelectedUser] = useState<string>('')
   const [selectedStreamType, setSelectedStreamType] = useState<'video' | 'audio' | 'latency' | ''>('')
@@ -39,7 +40,14 @@ const Telemetry: React.FC = () => {
   const loadUsers = async (sessionId: string) => {
     try {
       const userList = await telemetryDB.getUsers(sessionId)
-      setUsers(userList)
+      // parse the userName from session id
+      let userIndex = 1
+      let userName = sessionId.split('-')[userIndex]
+      let filteredUserList = userList.filter((user) => {
+        return user.userName !== userName
+      })
+
+      setUsers(filteredUserList)
     } catch (error) {
       console.error('Failed to load users:', error)
     }
@@ -64,6 +72,11 @@ const Telemetry: React.FC = () => {
     } finally {
       setLoading(false)
     }
+  }
+
+  const formatUserName = (userName: string): string => {
+    // Truncate to max 20 characters
+    return userName.length > 20 ? userName.substring(0, 17) + '...' : userName
   }
 
   const getDataForStreamType = (streamType: 'video' | 'audio' | 'latency') => {
@@ -132,7 +145,26 @@ const Telemetry: React.FC = () => {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
       <div className="max-w-6xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6">Telemetry Data</h1>
+        <div className="flex items-center mb-6">
+          <h1 className="text-3xl font-bold">Telemetry Data</h1>
+          <InfoTooltip title="Data Storage & Session ID">
+            <p className="mb-2">
+              <strong>Storage:</strong> Data is stored locally in your browser using{' '}
+              <a
+                href="https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue-400 hover:text-blue-300 underline"
+              >
+                IndexedDB
+              </a>
+              , not sent to any server.
+            </p>
+            <p>
+              <strong>Session ID Format:</strong> YYYYmmDD-HHmmss-&lt;4 random chars&gt; (e.g., 20260117-143025-A7K2)
+            </p>
+          </InfoTooltip>
+        </div>
 
         {/* Filters */}
         <div className="bg-gray-800 rounded-lg p-4 mb-6">
@@ -163,8 +195,8 @@ const Telemetry: React.FC = () => {
               >
                 <option value="">All Users</option>
                 {users.map((user) => (
-                  <option key={user} value={user}>
-                    {user}
+                  <option key={user.userId} value={user.userId}>
+                    {formatUserName(user.userName)} ({user.userId})
                   </option>
                 ))}
               </select>

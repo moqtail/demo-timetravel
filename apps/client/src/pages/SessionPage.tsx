@@ -109,7 +109,17 @@ function SessionPage() {
     [userId: string]: { latency: number; videoBitrate: number; audioBitrate: number }
   }>({})
   const telemetryInstances = useRef<{ [userId: string]: { video: NetworkTelemetry; audio: NetworkTelemetry } }>({})
-  const sessionId = useRef<string>(crypto.randomUUID())
+  const generateSessionId = () => {
+    const now = new Date()
+    const yyyy = now.getFullYear()
+    const mm = String(now.getMonth() + 1).padStart(2, '0')
+    const dd = String(now.getDate()).padStart(2, '0')
+    const hh = String(now.getHours()).padStart(2, '0')
+    const min = String(now.getMinutes()).padStart(2, '0')
+    const ss = String(now.getSeconds()).padStart(2, '0')
+    return `${roomState?.name}-${username}-${yyyy}${mm}${dd}-${hh}${min}${ss}`
+  }
+  const sessionId = useRef<string>(generateSessionId())
   const [latencyHistory, setLatencyHistory] = useState<{ [userId: string]: number[] }>({})
   const [videoBitrateHistory, setVideoBitrateHistory] = useState<{ [userId: string]: number[] }>({})
   const [audioBitrateHistory, setAudioBitrateHistory] = useState<{ [userId: string]: number[] }>({})
@@ -1780,6 +1790,7 @@ function SessionPage() {
               .addEntry({
                 sessionId: sessionId.current,
                 userId,
+                userName: users[userId]?.name || userId,
                 streamType: 'latency',
                 timestamp: Date.now(),
                 value: displayLatency,
@@ -1801,6 +1812,7 @@ function SessionPage() {
             .addEntry({
               sessionId: sessionId.current,
               userId,
+              userName: users[userId]?.name || userId,
               streamType: 'video',
               timestamp: Date.now(),
               value: videoBitrate,
@@ -1821,6 +1833,7 @@ function SessionPage() {
             .addEntry({
               sessionId: sessionId.current,
               userId,
+              userName: users[userId]?.name || userId,
               streamType: 'audio',
               timestamp: Date.now(),
               value: audioBitrate,
