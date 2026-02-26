@@ -109,7 +109,7 @@ export function setupTracks(
     fullTrackName: audioFullTrackName,
     forwardingPreference: ObjectForwardingPreference.Subgroup,
     trackSource: { live: audioContentSource },
-    publisherPriority: 128, // Magic number
+    publisherPriority: 10, // Magic number
     trackAlias: audioTrackAlias,
   })
   const videoContentSource = new LiveTrackSource(videoStream)
@@ -117,7 +117,7 @@ export function setupTracks(
     fullTrackName: videoFullTrackName,
     forwardingPreference: ObjectForwardingPreference.Subgroup,
     trackSource: { live: videoContentSource },
-    publisherPriority: 128, // Magic number
+    publisherPriority: 100, // Magic number
     trackAlias: videoTrackAlias,
   })
   const videoHDContentSource = new LiveTrackSource(videoHDStream)
@@ -125,7 +125,7 @@ export function setupTracks(
     fullTrackName: videoHDFullTrackName,
     forwardingPreference: ObjectForwardingPreference.Subgroup,
     trackSource: { live: videoHDContentSource },
-    publisherPriority: 128, // Magic number
+    publisherPriority: 110, // Magic number
     trackAlias: videoHDTrackAlias,
   })
   const chatContentSource = new LiveTrackSource(chatStream)
@@ -133,7 +133,7 @@ export function setupTracks(
     fullTrackName: chatFullTrackName,
     forwardingPreference: ObjectForwardingPreference.Subgroup,
     trackSource: { live: chatContentSource },
-    publisherPriority: 128, // Magic number
+    publisherPriority: 200, // Magic number
     trackAlias: chatTrackAlias,
   })
   const screenshareContentSource = new LiveTrackSource(screenshareStream)
@@ -141,7 +141,7 @@ export function setupTracks(
     fullTrackName: screenshareFullTrackName,
     forwardingPreference: ObjectForwardingPreference.Subgroup,
     trackSource: { live: screenshareContentSource },
-    publisherPriority: 128, // Magic number
+    publisherPriority: 50, // Magic number
     trackAlias: screenshareTrackAlias,
   })
   return {
@@ -161,7 +161,7 @@ export function setupTracks(
 export function initializeChatMessageSender({
   chatFullTrackName,
   chatStreamController,
-  publisherPriority = 1,
+  publisherPriority = 200,
   objectForwardingPreference,
   initialChatGroupId = 10001,
   initialChatObjectId = 0,
@@ -1519,7 +1519,7 @@ export function useVideoPublisher(
       stream,
       videoFullTrackName,
       videoStreamController: tracks.getVideoStreamController(),
-      publisherPriority: 1,
+      publisherPriority: 100,
       objectForwardingPreference: ObjectForwardingPreference.Subgroup,
     })
 
@@ -1527,7 +1527,7 @@ export function useVideoPublisher(
       stream,
       audioFullTrackName,
       audioStreamController: tracks.getAudioStreamController(),
-      publisherPriority: 1,
+      publisherPriority: 10,
       audioGroupId: 0,
       objectForwardingPreference: ObjectForwardingPreference.Subgroup,
     })
